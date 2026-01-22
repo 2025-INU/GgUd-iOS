@@ -7,6 +7,35 @@
 import SwiftUI
 
 struct HomeView: View {
+
+    // 임시 데이터(나중에 API/DB 붙이면 ViewModel/Store로 이동)
+    private let ongoing: [Appointment] = [
+        Appointment(
+            title: "은우 생일 (부평역)",
+            members: ["이은우", "윤은석", "정철웅"],
+            dateText: "9월 29일",
+            status: .ongoing,
+            badgeText: "경로"
+        )
+    ]
+
+    private let scheduled: [Appointment] = [
+        Appointment(
+            title: "은우 생일 (부평역)",
+            members: ["이은우", "윤은석", "정철웅"],
+            dateText: "9월 29일",
+            status: .scheduled,
+            badgeText: nil
+        ),
+        Appointment(
+            title: "은우 생일 (부평역)",
+            members: ["이은우", "윤은석", "정철웅"],
+            dateText: "9월 29일",
+            status: .scheduled,
+            badgeText: nil
+        )
+    ]
+
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
@@ -14,30 +43,17 @@ struct HomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
 
-                    // 상단 바: 로고 / 알림
-                    HStack {
-                        Text("로고")
-                            .font(AppFonts.title(20))
-                            .foregroundStyle(AppColors.text)
-
-                        Spacer()
-
-                        Button {
-                            print("알림")
-                        } label: {
-                            Image(systemName: "bell")
-                                .font(.system(size: 18, weight: .regular))
-                                .foregroundStyle(AppColors.text)
-                                .padding(8)
-                        }
-                    }
+                    HomeTopBarView(onTapBell: {
+                        print("알림")
+                    })
                     .padding(.top, 8)
 
-                    // 중앙 큰 버튼(약속 만들기)
+                    // 중앙 CTA (push 이동)
                     HStack {
                         Spacer()
-                        Button {
-                            print("약속 만들기")
+
+                        NavigationLink {
+                            CreateAppointmentView()
                         } label: {
                             Text("약속 만들기")
                                 .font(AppFonts.body(16))
@@ -47,49 +63,36 @@ struct HomeView: View {
                                 .background(AppColors.primary)
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
+
                         Spacer()
                     }
-                    .padding(.top, 16)
-                    .padding(.bottom, 6)
+                    .padding(.vertical, 14)
 
-                    // 진행중 약속 섹션
+                    // 진행중 약속
                     Text("진행중 약속")
                         .font(AppFonts.body(14))
                         .foregroundStyle(AppColors.text)
 
-                    AppointmentCard(
-                        title: "은우 생일 (부평역)",
-                        members: "이은우, 윤은석, 정철웅",
-                        dateText: "9월 29일",
-                        badgeText: "경로"
-                    )
+                    ForEach(ongoing) { item in
+                        AppointmentCard(item: item)
+                    }
 
-                    // 예정된 약속 섹션
+                    // 예정된 약속
                     Text("예정된 약속")
                         .font(AppFonts.body(14))
                         .foregroundStyle(AppColors.text)
                         .padding(.top, 10)
 
-                    AppointmentCard(
-                        title: "은우 생일 (부평역)",
-                        members: "이은우, 윤은석, 정철웅",
-                        dateText: "9월 29일",
-                        badgeText: nil
-                    )
+                    ForEach(scheduled) { item in
+                        AppointmentCard(item: item)
+                    }
 
-                    AppointmentCard(
-                        title: "은우 생일 (부평역)",
-                        members: "이은우, 윤은석, 정철웅",
-                        dateText: "9월 29일",
-                        badgeText: nil
-                    )
-
-                    Spacer(minLength: 80) // 탭바 공간 확보
+                    Spacer(minLength: 80) // 탭바 공간
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, 40)
+                .padding(.bottom, 30)
             }
         }
-        .navigationBarHidden(true) // 상단 네비 타이틀 숨김(이미지처럼)
+        .navigationBarHidden(true)
     }
 }

@@ -8,22 +8,19 @@
 import SwiftUI
 
 struct AppointmentCard: View {
-    let title: String
-    let members: String
-    let dateText: String
-    let badgeText: String? // "경로" 같은 작은 배지
+    let item: Appointment
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                Text(title)
+                Text(item.title)
                     .font(AppFonts.body(16))
                     .foregroundStyle(AppColors.text)
 
                 Spacer()
 
-                if let badgeText {
-                    Text(badgeText)
+                if let badge = item.badgeText {
+                    Text(badge)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white)
                         .padding(.vertical, 4)
@@ -34,14 +31,14 @@ struct AppointmentCard: View {
             }
 
             HStack {
-                Text(members)
-                    .font(.system(size: 12, weight: .regular))
+                Text(item.members.joined(separator: ", "))
+                    .font(.system(size: 12))
                     .foregroundStyle(AppColors.subText)
 
                 Spacer()
 
-                Text(dateText)
-                    .font(.system(size: 12, weight: .regular))
+                Text(item.dateText)
+                    .font(.system(size: 12))
                     .foregroundStyle(AppColors.subText)
             }
         }
@@ -54,3 +51,4 @@ struct AppointmentCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
+
