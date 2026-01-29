@@ -1,9 +1,3 @@
-//
-//  HomeView.swift
-//  GgUd
-//
-//  Created by 🍑혜리미 맥북🍑 on 1/15/26.
-//
 import SwiftUI
 
 struct HomeView: View {
@@ -11,28 +5,27 @@ struct HomeView: View {
     // 임시 데이터(나중에 API/DB 붙이면 ViewModel/Store로 이동)
     private let ongoing: [Appointment] = [
         Appointment(
-            title: "은우 생일 (부평역)",
-            members: ["이은우", "윤은석", "정철웅"],
-            dateText: "9월 29일",
+            title: "회사 동료 점심 모임",
             status: .ongoing,
-            badgeText: "경로"
+            dateText: "2025-11-10",
+            timeText: "12:30",
+            locationText: "강남역 4번 출구 근처",
+            memberColors: [.red, .blue, .green, .purple],
+            highlightInitials: ["이", "윤"],
+            memberCount: 4
         )
     ]
 
     private let scheduled: [Appointment] = [
         Appointment(
-            title: "은우 생일 (부평역)",
-            members: ["이은우", "윤은석", "정철웅"],
-            dateText: "9월 29일",
+            title: "동아리 회의",
             status: .scheduled,
-            badgeText: nil
-        ),
-        Appointment(
-            title: "은우 생일 (부평역)",
-            members: ["이은우", "윤은석", "정철웅"],
-            dateText: "9월 29일",
-            status: .scheduled,
-            badgeText: nil
+            dateText: "2025-11-15",
+            timeText: "19:00",
+            locationText: "인천대 정문 카페",
+            memberColors: [.orange, .pink, .blue],
+            highlightInitials: ["김", "박"],
+            memberCount: 3
         )
     ]
 
@@ -40,59 +33,54 @@ struct HomeView: View {
         ZStack {
             AppColors.background.ignoresSafeArea()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+            VStack(spacing: 0) {
+                HomeTopBarView()
 
-                    HomeTopBarView(onTapBell: {
-                        print("알림")
-                    })
-                    .padding(.top, 8)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
 
-                    // 중앙 CTA (push 이동)
-                    HStack {
-                        Spacer()
+                        // 진행중 약속
+                        Text("진행중 약속")
+                            .font(AppFonts.body(14))
+                            .foregroundStyle(AppColors.text)
+                            .padding(.top, 8)
 
-                        NavigationLink {
-                            CreateAppointmentView()
-                        } label: {
-                            Text("약속 만들기")
-                                .font(AppFonts.body(16))
-                                .foregroundStyle(.white)
-                                .padding(.vertical, 14)
-                                .padding(.horizontal, 36)
-                                .background(AppColors.primary)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        ForEach(ongoing) { item in
+                            HomeAppointmentCard(model: item.homeCardModel)
                         }
 
-                        Spacer()
+                        // 예정된 약속
+                        Text("예정된 약속")
+                            .font(AppFonts.body(14))
+                            .foregroundStyle(AppColors.text)
+                            .padding(.top, 10)
+
+                        ForEach(scheduled) { item in
+                            HomeAppointmentCard(model: item.homeCardModel)
+                        }
+
+                        Spacer(minLength: 80) // 탭바 공간
                     }
-                    .padding(.vertical, 14)
-
-                    // 진행중 약속
-                    Text("진행중 약속")
-                        .font(AppFonts.body(14))
-                        .foregroundStyle(AppColors.text)
-
-                    ForEach(ongoing) { item in
-                        AppointmentCard(item: item)
-                    }
-
-                    // 예정된 약속
-                    Text("예정된 약속")
-                        .font(AppFonts.body(14))
-                        .foregroundStyle(AppColors.text)
-                        .padding(.top, 10)
-
-                    ForEach(scheduled) { item in
-                        AppointmentCard(item: item)
-                    }
-
-                    Spacer(minLength: 80) // 탭바 공간
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 30)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 30)
             }
         }
         .navigationBarHidden(true)
+        .overlay(alignment: .bottomTrailing) {
+            NavigationLink {
+                CreateAppointmentView()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 56, height: 56)
+                    .background(AppColors.primary)
+                    .clipShape(Circle())
+                    .shadow(radius: 4)
+            }
+            .padding(.trailing, 20)
+            .padding(.bottom, 24)
+        }
     }
 }

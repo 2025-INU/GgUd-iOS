@@ -2,7 +2,6 @@
 //  AppColors.swift
 //  GgUd
 //
-//  Created by 🍑혜리미 맥북🍑 on 1/15/26.
 
 // ==================================
 // Figma 색상 코드
@@ -11,18 +10,21 @@
 
 import SwiftUI
 
-import SwiftUI
-
 enum AppColors {
+    static let background = Color("Color/Background")
+    static let text = Color("Color/Text")
+    static let subText = Color("Color/SubText")
+    static let border = Color("Color/Border")
 
-    // Backgrounds
-    static let background = Color(hex: "FFFFFF")
-    static let surface = Color(hex: "FFFFFF")
+    static let primary = Color("Color/Primary")
 
-    // Brand
-    static let primary = Color(hex: "#00C7BE")
+    // Success (WaitingRoom 완료 박스)
+    static let successText = Color("Color/SuccessText")
+    static let successBg = Color("Color/SuccessBg")
+    static let successBorder = Color("Color/SuccessBorder")
+    static let successButton = Color("Color/SuccessButton")
 
-    // Text
-    static let text = Color(hex: "000000")
-    static let subText = Color(hex: "000000")
+    // Kakao
+    static let kakaoYellow = Color("Color/KakaoYellow")
+    static let kakaoBlack = Color("Color/KakaoBlack") // 선택 (없으면 지워도 됨)
 }

@@ -8,22 +8,24 @@
 import SwiftUI
 
 struct HomeTopBarView: View {
-    let onTapBell: () -> Void
 
     var body: some View {
         HStack {
-            Text("로고")
-                .font(AppFonts.title(20))
+            Text("GgUd")
+                .font(.system(size: 24, weight: .bold))
                 .foregroundStyle(AppColors.text)
 
             Spacer()
 
-            Button(action: onTapBell) {
+            Button {
+                // 알림 화면 이동 (나중에)
+            } label: {
                 Image(systemName: "bell")
-                    .font(.system(size: 18))
+                    .font(.system(size: 20))
                     .foregroundStyle(AppColors.text)
-                    .padding(8)
             }
         }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
     }
 }

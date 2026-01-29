@@ -5,18 +5,23 @@
 //  Created by 🍑혜리미 맥북🍑 on 1/22/26.
 //
 
-import Foundation
-
-enum AppointmentStatus {
-    case ongoing
-    case scheduled
-}
+import SwiftUI
 
 struct Appointment: Identifiable {
     let id = UUID()
+
     let title: String
-    let members: [String]
+    let status: Status
     let dateText: String
-    let status: AppointmentStatus
-    let badgeText: String?   // 예: "경로"
+    let timeText: String
+    let locationText: String
+
+    let memberColors: [Color]       // 겹치는 아바타 색
+    let highlightInitials: [String] // ["이","윤"]
+    let memberCount: Int
+
+    enum Status {
+        case ongoing
+        case scheduled
+    }
 }
