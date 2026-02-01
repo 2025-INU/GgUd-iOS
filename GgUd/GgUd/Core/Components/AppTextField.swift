@@ -15,7 +15,7 @@ struct AppTextField: View {
         TextField(placeholder, text: $text)
             .font(AppFonts.body(16))
             .padding(14)
-            .background(AppColors.surface)
+            .background(AppColors.background)
             .clipShape(RoundedRectangle(cornerRadius: Radius.md))
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.md)

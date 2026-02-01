@@ -23,7 +23,7 @@ struct CardRow: View {
         }
         .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppColors.surface)
+        .background(AppColors.background)
         .clipShape(RoundedRectangle(cornerRadius: Radius.lg))
         .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
     }
