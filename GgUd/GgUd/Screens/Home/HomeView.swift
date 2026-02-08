@@ -1,6 +1,12 @@
 import SwiftUI
 
 struct HomeView: View {
+    fileprivate enum HomeSegment {
+        case ongoing
+        case scheduled
+    }
+
+    @State private var selectedSegment: HomeSegment = .ongoing
 
     // 임시 데이터(나중에 API/DB 붙이면 ViewModel/Store로 이동)
     private let ongoing: [Appointment] = [
@@ -38,25 +44,20 @@ struct HomeView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-
-                        // 진행중 약속
-                        Text("진행중 약속")
-                            .font(AppFonts.body(14))
-                            .foregroundStyle(AppColors.text)
+                        HomeSegmentedSwitch(selected: $selectedSegment)
                             .padding(.top, 8)
 
-                        ForEach(ongoing) { item in
-                            HomeAppointmentCard(model: item.homeCardModel)
-                        }
-
-                        // 예정된 약속
-                        Text("예정된 약속")
-                            .font(AppFonts.body(14))
-                            .foregroundStyle(AppColors.text)
-                            .padding(.top, 10)
-
-                        ForEach(scheduled) { item in
-                            HomeAppointmentCard(model: item.homeCardModel)
+                        Group {
+                            switch selectedSegment {
+                            case .ongoing:
+                                ForEach(ongoing) { item in
+                                    HomeAppointmentCard(model: item.homeCardModel)
+                                }
+                            case .scheduled:
+                                ForEach(scheduled) { item in
+                                    HomeAppointmentCard(model: item.homeCardModel)
+                                }
+                            }
                         }
 
                         Spacer(minLength: 80) // 탭바 공간
@@ -80,7 +81,61 @@ struct HomeView: View {
                     .shadow(radius: 4)
             }
             .padding(.trailing, 20)
-            .padding(.bottom, 24)
+            .padding(.bottom, 110)
         }
+        .overlay(alignment: .bottomLeading) {
+            NavigationLink {
+                LoginView()
+            } label: {
+                Text("로그인 (임시)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AppColors.subText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.9))
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(AppColors.border.opacity(0.6), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 16)
+            .padding(.bottom, 110)
+        }
+    }
+}
+
+private struct HomeSegmentedSwitch: View {
+    @Binding var selected: HomeView.HomeSegment
+
+    private let accent = AppColors.primary
+    private let background = Color(red: 0.94, green: 0.95, blue: 0.97)
+    private let unselectedText = Color(red: 0.42, green: 0.45, blue: 0.50)
+
+    var body: some View {
+        HStack(spacing: 0) {
+            segmentButton(title: "진행중인 약속", isSelected: selected == .ongoing) {
+                selected = .ongoing
+            }
+            segmentButton(title: "예정된 약속", isSelected: selected == .scheduled) {
+                selected = .scheduled
+            }
+        }
+        .padding(4)
+        .background(background)
+        .clipShape(Capsule())
+    }
+
+    private func segmentButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(AppFonts.body(14))
+                .foregroundStyle(isSelected ? Color.white : unselectedText)
+                .frame(maxWidth: .infinity)
+                .frame(height: 36)
+                .background(isSelected ? accent : Color.clear)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }

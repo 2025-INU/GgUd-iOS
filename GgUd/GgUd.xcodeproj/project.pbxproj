@@ -51,8 +51,10 @@
 				Core/Models/TransportType.swift,
 				GgUdApp.swift,
 				Navigation/AppRootView.swift,
+				Screens/Auth/LoginView.swift,
 				Screens/CreateAppointment/CreateAppointmentView.swift,
 				Screens/CreateAppointment/MapPreviewBox.swift,
+				Screens/History/HistoryView.swift,
 				Screens/Home/Appointment.swift,
 				Screens/Home/HomeTopBarView.swift,
 				Screens/Home/HomeView.swift,
@@ -64,7 +66,9 @@
 				Screens/WaitingRoom/Components/KakaoShareButton.swift,
 				Screens/WaitingRoom/Components/WaitingRoomSummaryCard.swift,
 				Screens/WaitingRoom/DeparturePopupCard.swift,
+				Screens/WaitingRoom/DepartureSetupView.swift,
 				Screens/WaitingRoom/DepartureStatusCard.swift,
+				Screens/WaitingRoom/MidpointView.swift,
 				Screens/WaitingRoom/WaitingRoomView.swift,
 			);
 			target = 8631F0EF2F18F85B006FFC40 /* GgUd */;
@@ -75,6 +79,7 @@
 				Assets.xcassets,
 				ContentView.swift,
 				GgUdApp.swift,
+				Info.plist,
 			);
 			target = 8631F1062F18F85D006FFC40 /* GgUdUITests */;
 		};
@@ -450,6 +455,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GgUd/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -477,6 +483,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GgUd/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

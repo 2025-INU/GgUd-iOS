@@ -11,16 +11,16 @@ struct WaitingRoomView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showDepartureSheet = true
-    @State private var myDeparture: String = ""
-    @State private var myTransport: TransportType = .transit
+    @State private var showDepartureSheet = false
+    @State private var navigateToMidpoint: Bool = false
 
-    private let hostName = "혜림"
-
-    //더미
+    // 더미
     private let members: [WaitingMember] = [
         .init(name: "김민수 (나)", statusText: "위치 입력 완료", isDone: true),
-        .init(name: "이윤", statusText: "위치 입력 대기중", isDone: false)
+        .init(name: "이지은", statusText: "위치 입력 완료", isDone: true),
+        .init(name: "박준호", statusText: "위치 입력 완료", isDone: true),
+        .init(name: "최수영", statusText: "위치 입력 완료", isDone: true),
+        .init(name: "정민재", statusText: "위치 입력 완료", isDone: true)
     ]
 
     
@@ -32,43 +32,42 @@ struct WaitingRoomView: View {
             VStack(spacing: 0) {
 
                 // Top Bar
-                HStack {
+                HStack(spacing: 12) {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 18, weight: .medium))
+                            .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(AppColors.text)
-                            .frame(width: 44, height: 44, alignment: .leading)
+                            .frame(width: 24, height: 24)
                     }
+                    .buttonStyle(.plain)
 
-                    Spacer()
-
-                    Text("은석 생일")
-                        .font(AppFonts.body(17))
+                    Text("약속 대기방")
+                        .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(AppColors.text)
-                        .padding(.top, 4)
 
                     Spacer()
-
-                    Color.clear.frame(width: 44, height: 44)
                 }
-                .padding(.horizontal, 20)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .padding(.leading, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 17)
+                .background(Color.white)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(AppColors.border)
+                        .frame(height: 1)
+                }
 
                 ScrollView {
                     WaitingRoomSummaryCard(
-                        title: "은석 생일",
-                        dateText: "2026-02-01",
-                        timeText: "19:00",
-                        subtitle: "약속이 생성되었습니다! 친구들을 초대해보세요."
+                        title: "대학 동기 모임",
+                        dateText: "2025-11-28",
+                        timeText: "19:52",
+                        subtitle: "약속이 생성되었습니다!"
                     )
                     .padding(.bottom, 6)
 
                     VStack(alignment: .leading, spacing: 16) {
-
-                        // 1) 상단 요약 카드 (임시: 다음 단계에서 피그마대로 만들 예정)
-                        // 우선 자리만 잡아두기
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color(red: 0.93, green: 0.97, blue: 1.0))
-                            .frame(height: 150)
 
                         // 2) 친구 초대하기 섹션 (임시 자리)
                         Text("친구 초대하기")
@@ -101,48 +100,27 @@ struct WaitingRoomView: View {
                             WaitingMemberRowCard(member: m)   // 새 피그마 카드
                         }
 
-                        // 4) 하단 완료 박스 (임시 자리)
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color.green.opacity(0.12))
-                            .frame(height: 120)
-
-                        Spacer(minLength: 40)
-                        
                         completionCTA
                             .padding(.top, 8)
+
+                        NavigationLink(
+                            destination: MidpointView(),
+                            isActive: $navigateToMidpoint
+                        ) {
+                            EmptyView()
+                        }
+                        .hidden()
 
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 24)
+                    .padding(.bottom, 120)
                 }
                 .scrollDismissesKeyboard(.interactively)
 
                 Spacer()
-
-                PrimaryButton(title: "중간 지점 찾기") {
-                    print("중간 지점 찾기")
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 24)
             }
             .disabled(showDepartureSheet) // ✅ 팝업 뜨면 뒤 터치 막기
-
-            // ✅ 팝업(오버레이)
-            if showDepartureSheet {
-                Color.black.opacity(0.45)
-                    .ignoresSafeArea()
-
-                DeparturePopupCard(
-                    userName: hostName,
-                    onConfirm: { departure, transport in
-                        myDeparture = departure
-                        myTransport = transport
-                        showDepartureSheet = false
-                    }
-                )
-                .padding(.horizontal, 24)
-                .transition(.scale.combined(with: .opacity))
-            }
         }
         .animation(.easeInOut(duration: 0.2), value: showDepartureSheet)
         .navigationBarHidden(true)
@@ -161,7 +139,7 @@ struct WaitingRoomView: View {
                 .foregroundStyle(Color(red: 22/255, green: 163/255, blue: 74/255)) // 초록 텍스트
 
             Button {
-                print("중간지점 확인하기")
+                navigateToMidpoint = true
             } label: {
                 Text("중간지점 확인하기")
                     .font(.system(size: 16, weight: .bold))

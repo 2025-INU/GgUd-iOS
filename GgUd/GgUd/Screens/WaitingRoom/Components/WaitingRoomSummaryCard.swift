@@ -12,52 +12,55 @@ struct WaitingRoomSummaryCard: View {
     let subtitle: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            // 아이콘
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.7))
-                .frame(width: 44, height: 44)
-                .overlay(
-                    Image(systemName: "calendar")
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 14) {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [Color(red: 0.30, green: 0.70, blue: 1.0),
+                                 Color(red: 0.22, green: 0.56, blue: 0.98)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 52, height: 52)
+                    .overlay(
+                        Image(systemName: "calendar")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(.white)
+                    )
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(AppColors.primary)
-                )
+                        .foregroundStyle(AppColors.text)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(AppColors.text)
-
-                HStack(spacing: 10) {
-                    Label(dateText, systemImage: "calendar")
-                        .labelStyle(.titleAndIcon)
-                    Label(timeText, systemImage: "clock")
-                        .labelStyle(.titleAndIcon)
+                    Text("\(dateText) · \(timeText)")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AppColors.subText)
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(AppColors.subText)
 
-                Text(subtitle)
-                    .font(.system(size: 13))
-                    .foregroundStyle(AppColors.subText)
+                Spacer()
             }
 
-            Spacer()
+            HStack(spacing: 10) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.13, green: 0.64, blue: 0.25))
+
+                Text(subtitle)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.13, green: 0.64, blue: 0.25))
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .padding(18)
+        .padding(20)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(red: 0.92, green: 0.97, blue: 1.0)) // 연한 하늘색
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(CardStyle.borderColor, lineWidth: CardStyle.borderWidth)
-        )
-        .shadow(
-            color: CardStyle.shadowColor,
-            radius: CardStyle.shadowRadius,
-            x: CardStyle.shadowX,
-            y: CardStyle.shadowY
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color(red: 0.92, green: 0.97, blue: 1.0))
         )
     }
 }

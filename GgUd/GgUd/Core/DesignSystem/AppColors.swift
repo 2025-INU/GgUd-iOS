@@ -16,5 +16,6 @@ enum AppColors {
     static let border = Color("Border")
     static let primary = Color("Primary")
     static let divider = Color("Divider")
+    static let subText2 = Color("SubText2")
 
 }
