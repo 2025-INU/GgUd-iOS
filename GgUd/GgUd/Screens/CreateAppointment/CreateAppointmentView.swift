@@ -1,230 +1,356 @@
-//
-//  CreateAppointmentView.swift
-//  GgUd
-//
-//  Created by 🍑혜리미 맥북🍑 on 1/22/26.
-//
 import SwiftUI
 
 struct CreateAppointmentView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var title: String = ""
-    @State private var date: Date = Date()
-    @State private var time: Date = Date()
-    @State private var didSelectDate: Bool = true
-    @State private var didSelectTime: Bool = true
-    @State private var navigateToWaitingRoom: Bool = false
+    @State private var selectedDate: Date?
+    @State private var selectedTime: Date?
 
-    private var isValid: Bool {
+    @State private var showDateDialog = false
+    @State private var showTimeDialog = false
+
+    @State private var isNameFocused = false
+    @State private var isDateFocused = false
+    @State private var isTimeFocused = false
+
+    @State private var dateDraft = Date()
+    @State private var timeDraft = Date()
+
+    @State private var navigateToWaitingRoom = false
+
+    private var isFormValid: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        && didSelectDate
-        && didSelectTime
+        && selectedDate != nil
+        && selectedTime != nil
+    }
+
+    private var dateText: String {
+        guard let selectedDate else { return "-/-/-" }
+        return selectedDate.formatted(.dateTime.year().month(.twoDigits).day(.twoDigits).locale(Locale(identifier: "ko_KR")))
+    }
+
+    private var timeText: String {
+        guard let selectedTime else { return "--:--" }
+        return selectedTime.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).locale(Locale(identifier: "ko_KR")))
     }
 
     var body: some View {
         ZStack {
-            AppColors.background.ignoresSafeArea()
+            Color.white.ignoresSafeArea()
 
             VStack(spacing: 0) {
+                AppBar(title: "약속 만들기", onBack: { dismiss() })
 
-                // Top Bar
-                HStack(spacing: 12) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(AppColors.text)
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.plain)
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        Spacer().frame(height: 11)
 
-                    Text("약속 만들기")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(AppColors.text)
-
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                .padding(.leading, 24)
-                .padding(.top, 16)
-                .padding(.bottom, 17)
-                .background(Color.white)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(AppColors.border)
-                        .frame(height: 1)
-                }
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        // 아이콘 박스
                         RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .fill(LinearGradient(
-                                colors: [Color(red: 0.30, green: 0.70, blue: 1.0),
-                                         Color(red: 0.22, green: 0.56, blue: 0.98)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ))
-                            .frame(width: 96, height: 96)
-                            .overlay(
-                                Image(systemName: "calendar")
-                                    .font(.system(size: 32, weight: .bold))
-                                    .foregroundStyle(.white)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(hex: "#38BDF8"), Color(hex: "#3B82F6")],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
                             )
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 12)
+                            .frame(width: 80, height: 80)
+                            .overlay(
+                                PromiseCreateIcon()
+                                    .frame(width: 25, height: 25)
+                            )
 
-                        VStack(spacing: 8) {
-                            Text("새로운 약속을 만들어보세요")
-                                .font(.system(size: 22, weight: .bold))
-                                .foregroundStyle(AppColors.text)
-                            Text("친구들과의 만남을 위한 정보를 입력해주세요")
-                                .font(.system(size: 14, weight: .regular))
-                                .foregroundStyle(AppColors.subText)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .multilineTextAlignment(.center)
+                        Spacer().frame(height: 24)
 
-                        VStack(alignment: .leading, spacing: 10) {
+                        Text("새로운 약속을 만들어보세요")
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundStyle(Color(hex: "#111827"))
+
+                        Spacer().frame(height: 8)
+
+                        Text("친구들과의 만남을 위한 정보를 입력해주세요")
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(Color(hex: "#4B5563"))
+
+                        Spacer().frame(height: 32)
+
+                        VStack(alignment: .leading, spacing: 0) {
                             Text("약속 이름 *")
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppColors.text)
+                                .foregroundStyle(Color(hex: "#374151"))
+
+                            Spacer().frame(height: 12)
 
                             TextField("약속 이름을 입력하세요", text: $title)
-                                .textInputAutocapitalization(.never)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 12)
+                                .font(.system(size: 16, weight: .regular))
+                                .foregroundStyle(Color(hex: "#111827"))
+                                .padding(17)
                                 .background(Color.white)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(AppColors.border, lineWidth: 1)
+                                        .stroke(isNameFocused ? Color(hex: "#3B82F6") : Color(hex: "#E5E7EB"), lineWidth: 1)
                                 )
+                                .onTapGesture {
+                                    isNameFocused = true
+                                    isDateFocused = false
+                                    isTimeFocused = false
+                                }
+                                .onChange(of: title) { _, newValue in
+                                    if newValue.count > 50 {
+                                        title = String(newValue.prefix(50))
+                                    }
+                                }
+
+                            Spacer().frame(height: 8)
 
                             HStack {
                                 Text("예: 대학 동기 모임, 회사 회식, 생일 파티")
                                     .font(.system(size: 12, weight: .regular))
-                                    .foregroundStyle(AppColors.subText)
+                                    .foregroundStyle(Color(hex: "#6B7280"))
                                 Spacer()
-                                Text("\(min(title.count, 50))/50")
+                                Text("\(title.count)/50")
                                     .font(.system(size: 12, weight: .regular))
-                                    .foregroundStyle(AppColors.subText)
+                                    .foregroundStyle(Color(hex: "#6B7280"))
                             }
                         }
 
-                        VStack(alignment: .leading, spacing: 10) {
+                        Spacer().frame(height: 24)
+
+                        VStack(alignment: .leading, spacing: 0) {
                             Text("만날 날짜 *")
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppColors.text)
+                                .foregroundStyle(Color(hex: "#374151"))
 
-                            ZStack(alignment: .trailing) {
-                                DatePicker(
-                                    "",
-                                    selection: $date,
-                                    displayedComponents: [.date]
-                                )
-                                .labelsHidden()
-                                .datePickerStyle(.compact)
-                                .environment(\.locale, Locale(identifier: "ko_KR"))
-                                .onChange(of: date) { _ in
-                                    didSelectDate = true
+                            Spacer().frame(height: 12)
+
+                            Button {
+                                hideAllFocus()
+                                isDateFocused = true
+                                dateDraft = selectedDate ?? Date()
+                                showDateDialog = true
+                            } label: {
+                                HStack {
+                                    Text(dateText)
+                                        .font(.system(size: 14, weight: .regular))
+                                        .foregroundStyle(Color(hex: "#111827"))
+                                    Spacer()
+                                    Image(systemName: "calendar")
+                                        .font(.system(size: 18, weight: .regular))
+                                        .foregroundStyle(Color(hex: "#111827"))
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-
-                                Image(systemName: "calendar")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(AppColors.text)
-                                    .padding(.trailing, 14)
-                                    .allowsHitTesting(false)
+                                .padding(17)
+                                .background(Color.white)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(isDateFocused ? Color(hex: "#3B82F6") : Color(hex: "#E5E7EB"), lineWidth: 1)
+                                )
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .background(Color.white)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(AppColors.border, lineWidth: 1)
-                            )
+                            .buttonStyle(.plain)
                         }
 
-                        VStack(alignment: .leading, spacing: 10) {
+                        Spacer().frame(height: 24)
+
+                        VStack(alignment: .leading, spacing: 0) {
                             Text("만날 시간 *")
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppColors.text)
+                                .foregroundStyle(Color(hex: "#374151"))
 
-                            ZStack(alignment: .trailing) {
-                                DatePicker(
-                                    "",
-                                    selection: $time,
-                                    displayedComponents: [.hourAndMinute]
-                                )
-                                .labelsHidden()
-                                .datePickerStyle(.compact)
-                                .environment(\.locale, Locale(identifier: "ko_KR"))
-                                .onChange(of: time) { _ in
-                                    didSelectTime = true
+                            Spacer().frame(height: 12)
+
+                            Button {
+                                hideAllFocus()
+                                isTimeFocused = true
+                                timeDraft = selectedTime ?? Date()
+                                showTimeDialog = true
+                            } label: {
+                                HStack {
+                                    Text(timeText)
+                                        .font(.system(size: 14, weight: .regular))
+                                        .foregroundStyle(Color(hex: "#111827"))
+                                    Spacer()
+                                    Image(systemName: "clock")
+                                        .font(.system(size: 18, weight: .regular))
+                                        .foregroundStyle(Color(hex: "#111827"))
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-
-                                Image(systemName: "clock")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(AppColors.text)
-                                    .padding(.trailing, 14)
-                                    .allowsHitTesting(false)
+                                .padding(17)
+                                .background(Color.white)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(isTimeFocused ? Color(hex: "#3B82F6") : Color(hex: "#E5E7EB"), lineWidth: 1)
+                                )
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .background(Color.white)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(AppColors.border, lineWidth: 1)
-                            )
+                            .buttonStyle(.plain)
                         }
 
-                        Button(action: { navigateToWaitingRoom = true }) {
+                        Spacer().frame(height: 48)
+
+                        Button {
+                            navigateToWaitingRoom = true
+                        } label: {
                             Text("약속 생성하기")
                                 .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(isValid ? Color.white : Color.white.opacity(0.6))
+                                .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 52)
+                                .frame(height: 58)
                                 .background(
                                     LinearGradient(
-                                        colors: isValid
-                                        ? [Color(red: 0.07, green: 0.65, blue: 0.96),
-                                           Color(red: 0.16, green: 0.40, blue: 0.95)]
-                                        : [Color(red: 0.55, green: 0.80, blue: 0.98),
-                                           Color(red: 0.52, green: 0.67, blue: 0.95)],
+                                        colors: isFormValid
+                                        ? [Color(hex: "#38BDF8"), Color(hex: "#2563EB")]
+                                        : [Color(hex: "#8ECDF3"), Color(hex: "#8AA6E8")],
                                         startPoint: .leading,
                                         endPoint: .trailing
                                     )
                                 )
                                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                .shadow(color: Color.black.opacity(isValid ? 0.12 : 0.06), radius: 12, x: 0, y: 6)
                         }
                         .buttonStyle(.plain)
-                        .padding(.top, 4)
-                        .disabled(!isValid)
+                        .disabled(!isFormValid)
 
-                        NavigationLink(
-                            destination: DepartureSetupView(),
-                            isActive: $navigateToWaitingRoom
-                        ) {
-                            EmptyView()
-                        }
-                        .hidden()
+                        Spacer().frame(height: 12)
 
                         Text("모든 필수 정보를 입력해주세요")
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundStyle(AppColors.subText)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.top, 2)
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(Color(hex: "#6B7280"))
+
+                        Spacer().frame(height: 24)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 24)
-                    .padding(.top, 16)
-                    .padding(.bottom, 24)
                 }
             }
+
+            NavigationLink(destination: DepartureSetupView(), isActive: $navigateToWaitingRoom) {
+                EmptyView()
+            }
+            .hidden()
         }
         .navigationBarHidden(true)
-        .toolbar(.hidden, for: .tabBar) // ✅ 탭바 숨김
+        .toolbar(.hidden, for: .tabBar)
+        .sheet(isPresented: $showDateDialog) {
+            SelectionSheet(
+                title: "날짜 선택",
+                onCancel: {
+                    showDateDialog = false
+                    isDateFocused = false
+                },
+                onConfirm: {
+                    selectedDate = dateDraft
+                    showDateDialog = false
+                    isDateFocused = false
+                }
+            ) {
+                DatePicker("", selection: $dateDraft, displayedComponents: [.date])
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+                    .environment(\.locale, Locale(identifier: "ko_KR"))
+            }
+        }
+        .sheet(isPresented: $showTimeDialog) {
+            SelectionSheet(
+                title: "시간 선택",
+                onCancel: {
+                    showTimeDialog = false
+                    isTimeFocused = false
+                },
+                onConfirm: {
+                    selectedTime = timeDraft
+                    showTimeDialog = false
+                    isTimeFocused = false
+                }
+            ) {
+                DatePicker("", selection: $timeDraft, displayedComponents: [.hourAndMinute])
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+                    .environment(\.locale, Locale(identifier: "ko_KR"))
+            }
+        }
+    }
+
+    private func hideAllFocus() {
+        isNameFocused = false
+        isDateFocused = false
+        isTimeFocused = false
+    }
+}
+
+private struct PromiseCreateIcon: View {
+    var body: some View {
+        PromiseCreateIconShape()
+            .fill(Color.white)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct PromiseCreateIconShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 18.75, y: 2.5))
+        path.addLine(to: CGPoint(x: 23.75, y: 2.5))
+        path.addCurve(to: CGPoint(x: 24.6375, y: 2.8625), control1: CGPoint(x: 24.1, y: 2.5), control2: CGPoint(x: 24.3958, y: 2.62083))
+        path.addCurve(to: CGPoint(x: 25.0, y: 3.75), control1: CGPoint(x: 24.8792, y: 3.10417), control2: CGPoint(x: 25.0, y: 3.4))
+        path.addLine(to: CGPoint(x: 25.0, y: 23.75))
+        path.addCurve(to: CGPoint(x: 24.6375, y: 24.6375), control1: CGPoint(x: 25.0, y: 24.1), control2: CGPoint(x: 24.8792, y: 24.3958))
+        path.addCurve(to: CGPoint(x: 23.75, y: 25.0), control1: CGPoint(x: 24.3958, y: 24.8792), control2: CGPoint(x: 24.1, y: 25.0))
+        path.addLine(to: CGPoint(x: 1.25, y: 25.0))
+        path.addCurve(to: CGPoint(x: 0.3625, y: 24.6375), control1: CGPoint(x: 0.9, y: 25.0), control2: CGPoint(x: 0.604167, y: 24.8792))
+        path.addCurve(to: CGPoint(x: 0.0, y: 23.75), control1: CGPoint(x: 0.120833, y: 24.3958), control2: CGPoint(x: 0.0, y: 24.1))
+        path.addLine(to: CGPoint(x: 0.0, y: 3.75))
+        path.addCurve(to: CGPoint(x: 0.3625, y: 2.8625), control1: CGPoint(x: 0.0, y: 3.4), control2: CGPoint(x: 0.120833, y: 3.10417))
+        path.addCurve(to: CGPoint(x: 1.25, y: 2.5), control1: CGPoint(x: 0.604167, y: 2.62083), control2: CGPoint(x: 0.9, y: 2.5))
+        path.addLine(to: CGPoint(x: 6.25, y: 2.5))
+        path.addLine(to: CGPoint(x: 6.25, y: 0.0))
+        path.addLine(to: CGPoint(x: 8.75, y: 0.0))
+        path.addLine(to: CGPoint(x: 8.75, y: 2.5))
+        path.addLine(to: CGPoint(x: 16.25, y: 2.5))
+        path.addLine(to: CGPoint(x: 16.25, y: 0.0))
+        path.addLine(to: CGPoint(x: 18.75, y: 0.0))
+        path.addLine(to: CGPoint(x: 18.75, y: 2.5))
+        path.closeSubpath()
+
+        path.move(to: CGPoint(x: 2.5, y: 10.0))
+        path.addLine(to: CGPoint(x: 2.5, y: 22.5))
+        path.addLine(to: CGPoint(x: 22.5, y: 22.5))
+        path.addLine(to: CGPoint(x: 22.5, y: 10.0))
+        path.addLine(to: CGPoint(x: 2.5, y: 10.0))
+        path.closeSubpath()
+
+        path.move(to: CGPoint(x: 5.0, y: 15.0))
+        path.addLine(to: CGPoint(x: 11.25, y: 15.0))
+        path.addLine(to: CGPoint(x: 11.25, y: 20.0))
+        path.addLine(to: CGPoint(x: 5.0, y: 20.0))
+        path.addLine(to: CGPoint(x: 5.0, y: 15.0))
+        path.closeSubpath()
+
+        let scaleX = rect.width / 25.0
+        let scaleY = rect.height / 25.0
+        return path.applying(CGAffineTransform(scaleX: scaleX, y: scaleY))
+    }
+}
+
+private struct SelectionSheet<Content: View>: View {
+    let title: String
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                content
+                    .padding()
+                Spacer()
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("취소", action: onCancel)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("확인", action: onConfirm)
+                }
+            }
+            .background(Color.white)
+        }
+        .presentationDetents([.medium, .large])
     }
 }

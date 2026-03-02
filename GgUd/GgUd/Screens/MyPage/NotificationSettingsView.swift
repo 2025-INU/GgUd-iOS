@@ -118,48 +118,6 @@ struct NotificationSettingsView: View {
     }
 }
 
-// MARK: - AppBar (Figma: 375x69, padding 16/24/17/24, bottom border 1)
-
-private struct AppBar: View {
-    let title: String
-    let onBack: () -> Void
-
-    private enum A {
-        static let height: CGFloat = 69
-        static let padTop: CGFloat = 16
-        static let padH: CGFloat = 24
-        static let padBottom: CGFloat = 17
-        static let border: CGFloat = 1
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Button(action: onBack) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 24, height: 24)
-                        .foregroundStyle(Color.primary)
-                }
-
-                Text(title)
-                    .font(.system(size: 20, weight: .bold))
-
-                Spacer()
-            }
-            .padding(.top, A.padTop)
-            .padding(.horizontal, A.padH)
-            .padding(.bottom, A.padBottom)
-            .frame(height: A.height)
-
-            Rectangle()
-                .fill(Color(hex: "#E5E7EB"))
-                .frame(height: 1)
-        }
-        .background(Color("#FFFFFF"))
-    }
-}
-
 // MARK: - Section Title
 
 private struct SectionTitle: View {

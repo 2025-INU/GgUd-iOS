@@ -17,13 +17,23 @@ struct HomeTopBarView: View {
 
             Spacer()
 
-            Button {
-                // 알림 화면 이동 (나중에)
+            NavigationLink {
+                NotificationView()
             } label: {
-                Image(systemName: "bell")
-                    .font(.system(size: 20))
-                    .foregroundStyle(AppColors.text)
+                HomeAlarmIcon()
+                    .frame(width: 15, height: 18)
+                    .overlay(alignment: .topTrailing) {
+                        Text("2")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 18, height: 18)
+                            .background(Color(hex: "#EF4444"))
+                            .clipShape(Circle())
+                            .offset(x: 10, y: -10)
+                    }
             }
+            .buttonStyle(.plain)
+            .padding(.trailing, 8)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)

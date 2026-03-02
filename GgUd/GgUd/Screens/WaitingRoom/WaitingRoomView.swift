@@ -31,32 +31,7 @@ struct WaitingRoomView: View {
             // ✅ 기존 대기실 화면
             VStack(spacing: 0) {
 
-                // Top Bar
-                HStack(spacing: 12) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(AppColors.text)
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.plain)
-
-                    Text("약속 대기방")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(AppColors.text)
-
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                .padding(.leading, 24)
-                .padding(.top, 16)
-                .padding(.bottom, 17)
-                .background(Color.white)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(AppColors.border)
-                        .frame(height: 1)
-                }
+                AppBar(title: "약속 대기방", onBack: { dismiss() })
 
                 ScrollView {
                     WaitingRoomSummaryCard(

@@ -9,23 +9,22 @@ import SwiftUI
 struct LoginView: View {
     var body: some View {
         ZStack {
-            AppColors.background.ignoresSafeArea()
+            Color.white.ignoresSafeArea()
 
             ScrollView {
                 VStack(spacing: 28) {
                     VStack(spacing: 18) {
                         RoundedRectangle(cornerRadius: 24, style: .continuous)
                             .fill(LinearGradient(
-                                colors: [Color(red: 0.23, green: 0.55, blue: 0.98),
-                                         Color(red: 0.12, green: 0.44, blue: 0.95)],
+                                colors: [Color(hex: "#3B82F6"),
+                                         Color(hex: "#0284C7")],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ))
                             .frame(width: 96, height: 96)
                             .overlay(
-                                Image(systemName: "mappin.and.ellipse")
-                                    .font(.system(size: 34, weight: .bold))
-                                    .foregroundStyle(.white)
+                                LoginMapPinIcon()
+                                    .frame(width: 30, height: 36)
                             )
 
                         Text("GgUd")
@@ -132,12 +131,74 @@ private struct FeatureCard: View {
             Spacer()
         }
         .padding(16)
-        .background(Color.white)
+        .background(.ultraThinMaterial)
+        .background(Color.white.opacity(0.8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color(hex: "#F3F4F6"), lineWidth: 1)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 4)
+        .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
     }
 }
 
 #Preview {
     LoginView()
+}
+
+private struct LoginMapPinIcon: View {
+    var body: some View {
+        ZStack {
+            LoginMapPinShape()
+                .fill(Color.white)
+            Circle()
+                .fill(Color(red: 0.14, green: 0.49, blue: 0.95))
+                .frame(width: 8, height: 8)
+                .offset(y: -6)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct LoginMapPinShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+
+        path.move(to: CGPoint(x: 8.9568, y: 8.96583))
+        path.addLine(to: CGPoint(x: 5.24813, y: 12.6758))
+        path.addLine(to: CGPoint(x: 1.53945, y: 8.96583))
+        path.addCurve(to: CGPoint(x: 0.174938, y: 6.58583),
+                      control1: CGPoint(x: 0.863025, y: 8.29695),
+                      control2: CGPoint(x: 0.408188, y: 7.50361))
+        path.addCurve(to: CGPoint(x: 0.174938, y: 3.92583),
+                      control1: CGPoint(x: -0.0583125, y: 5.69917),
+                      control2: CGPoint(x: -0.0583125, y: 4.8125))
+        path.addCurve(to: CGPoint(x: 1.53362, y: 1.54),
+                      control1: CGPoint(x: 0.408188, y: 3.00806),
+                      control2: CGPoint(x: 0.861081, y: 2.21278))
+        path.addCurve(to: CGPoint(x: 3.9186, y: 0.169168),
+                      control1: CGPoint(x: 2.20616, y: 0.867224),
+                      control2: CGPoint(x: 3.00115, y: 0.410279))
+        path.addCurve(to: CGPoint(x: 6.57765, y: 0.169168),
+                      control1: CGPoint(x: 4.80495, y: -0.0563879),
+                      control2: CGPoint(x: 5.6913, y: -0.0563879))
+        path.addCurve(to: CGPoint(x: 8.96263, y: 1.54),
+                      control1: CGPoint(x: 7.4951, y: 0.410279),
+                      control2: CGPoint(x: 8.29009, y: 0.867224))
+        path.addCurve(to: CGPoint(x: 10.3213, y: 3.92583),
+                      control1: CGPoint(x: 9.63517, y: 2.21278),
+                      control2: CGPoint(x: 10.0881, y: 3.00806))
+        path.addCurve(to: CGPoint(x: 10.3213, y: 6.58583),
+                      control1: CGPoint(x: 10.5546, y: 4.8125),
+                      control2: CGPoint(x: 10.5546, y: 5.69917))
+        path.addCurve(to: CGPoint(x: 8.9568, y: 8.96583),
+                      control1: CGPoint(x: 10.0881, y: 7.50361),
+                      control2: CGPoint(x: 9.63323, y: 8.29695))
+        path.closeSubpath()
+
+        let scaleX = rect.width / 11.0
+        let scaleY = rect.height / 13.0
+        let transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
+        return path.applying(transform)
+    }
 }

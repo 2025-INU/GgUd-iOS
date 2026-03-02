@@ -1,14 +1,9 @@
-//
-//  HistoryView.swift
-//  GgUd
-//
-//
-
 import SwiftUI
 
 struct HistoryView: View {
-    @State private var showSearch: Bool = false
-    @State private var searchText: String = ""
+    @State private var showSearchBar = false
+    @State private var keyword = ""
+    @State private var isLoading = false
 
     private let items: [HistoryItem] = [
         .init(title: "친구들과 카페 모임", dateText: "2024년 1월 10일", timeText: "오후 3:00", memberCount: 4, extraCount: 0, location: "홍대 스타벅스", status: .done),
@@ -18,344 +13,125 @@ struct HistoryView: View {
         .init(title: "영화 관람", dateText: "2023년 12월 28일", timeText: "오후 8:00", memberCount: 3, extraCount: 0, location: "CGV 강남", status: .done)
     ]
 
+    private var filteredItems: [HistoryItem] {
+        let q = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return items }
+        return items.filter {
+            $0.title.localizedCaseInsensitiveContains(q) || $0.location.localizedCaseInsensitiveContains(q)
+        }
+    }
+
     var body: some View {
-        ZStack {
-            Color.white.ignoresSafeArea()
+        VStack(spacing: 0) {
+            historyHeader
 
-            VStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    HistoryTopBar(showSearch: $showSearch, searchText: $searchText)
-                    if showSearch {
-                        HistorySearchBar(text: $searchText)
-                            .padding(.horizontal, 24)
-                            .padding(.top, 8)
-                            .padding(.bottom, 12)
-                            .background(Color.white)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                }
-                .background(Color.white)
-                .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
+            Divider()
+                .overlay(Color(hex: "#E5E7EB"))
 
-                ScrollView {
-                    VStack(spacing: 16) {
-                        ForEach(items) { item in
+            Spacer().frame(height: 11)
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 16) {
+                    if isLoading {
+                        Text("불러오는 중...")
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(Color(hex: "#6B7280"))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                    } else if filteredItems.isEmpty {
+                        Text("표시할 히스토리가 없습니다.")
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(Color(hex: "#6B7280"))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                    } else {
+                        ForEach(filteredItems) { item in
                             HistoryCard(item: item)
                         }
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 16)
-                    .padding(.bottom, 120)
                 }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 106)
             }
         }
+        .background(Color.white)
         .navigationBarHidden(true)
-        
-        .animation(.easeInOut(duration: 0.2), value: showSearch)
+        .animation(.easeInOut(duration: 0.2), value: showSearchBar)
     }
-}
 
-
-private struct HistoryTopBar: View {
-    @Binding var showSearch: Bool
-    @Binding var searchText: String
-
-    var body: some View {
-        HStack {
-            Text("약속 히스토리")
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(AppColors.text)
-
-            Spacer()
-
-            if showSearch {
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showSearch = false
-                        searchText = ""
-                    }
-                }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(AppColors.subText)
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-            } else {
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showSearch = true
-                    }
-                }) {
-                    SearchIcon()
-                        .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-        .padding(.leading, 24)
-        .padding(.trailing, 24)
-        .padding(.top, 16)
-        .padding(.bottom, 17)
-        .background(Color.white)
-    }
-}
-
-private struct HistorySearchBar: View {
-    @Binding var text: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(AppColors.subText)
-
-            TextField("약속 이름이나 친구 이름을 검색하세요", text: $text)
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(AppColors.text)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 48)
-        .background(Color.white)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(AppColors.border.opacity(0.8), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-private struct HistoryCard: View {
-    let item: HistoryItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 25) {
-            // Wrapper 1
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(item.title)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(AppColors.text)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "calendar")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppColors.subText)
-                            Text(item.dateText)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppColors.subText)
-                        }
-
-                        HStack(spacing: 8) {
-                            Image(systemName: "clock")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppColors.subText)
-                            Text(item.timeText)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppColors.subText)
-                        }
-                    }
-                }
-
-                Spacer()
-
-                VStack(alignment: .center, spacing: 10) {
-                    StatusChip(status: item.status)
-
-                    if item.status == .done {
-                        Button(action: {}) {
-                            Text("정산하기")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 8)
-                                .background(
-                                    LinearGradient(
-                                        colors: [Color(red: 0.22, green: 0.74, blue: 0.97),
-                                                 Color(red: 0.01, green: 0.52, blue: 0.78)],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                                .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .frame(minWidth: 92, alignment: .center)
-            }
-
-            // Wrapper 2
+    private var historyHeader: some View {
+        VStack(spacing: 0) {
             HStack {
-                AvatarGroup(count: min(item.memberCount, 4), extra: item.extraCount)
-
-                Text("\(item.memberCount)명 참여")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AppColors.subText)
+                Text("약속 히스토리")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(Color(hex: "#111827"))
 
                 Spacer()
 
-                HStack(spacing: 6) {
-                    LocationPinIcon()
-                        .frame(width: 14, height: 16)
-                    Text(item.location)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(AppColors.subText)
+                Button {
+                    let next = !showSearchBar
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showSearchBar = next
+                    }
+                    if !next { keyword = "" }
+                } label: {
+                    Group {
+                        if showSearchBar {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundStyle(Color(hex: "#4B5563"))
+                                .frame(width: 24, height: 24)
+                        } else {
+                            SearchIcon()
+                                .frame(width: 20, height: 20)
+                        }
+                    }
+                    .frame(width: 37, height: 44)
                 }
+                .buttonStyle(.plain)
+            }
+            .frame(height: 76)
+            .padding(.horizontal, 24)
+
+            if showSearchBar {
+                HStack(spacing: 18) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color(hex: "#9CA3AF"))
+                        .frame(width: 12, height: 12)
+
+                    TextField("약속 이름이나 친구 이름을 검색하세요", text: $keyword)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Color(hex: "#111827"))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .onChange(of: keyword) { _, newValue in
+                            if newValue.count > 50 {
+                                keyword = String(newValue.prefix(50))
+                            }
+                        }
+                }
+                .padding(.horizontal, 17)
+                .frame(height: 46)
+                .frame(maxWidth: .infinity)
+                .background(Color(hex: "#F9FAFB"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color(hex: "#E5E7EB"), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .padding(25)
-        .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color(red: 0.90, green: 0.91, blue: 0.92), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
-    }
-}
-
-private struct AvatarGroup: View {
-    let count: Int
-    let extra: Int
-
-    var body: some View {
-        HStack(spacing: -8) {
-            ForEach(0..<count, id: \.self) { _ in
-                Circle()
-                    .fill(Color(red: 0.70, green: 0.72, blue: 0.76))
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
-                    )
-            }
-
-            if extra > 0 {
-                Circle()
-                    .fill(Color(red: 0.85, green: 0.87, blue: 0.90))
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Text("+\(extra)")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(AppColors.subText)
-                    )
-            }
-        }
-    }
-}
-
-private struct StatusChip: View {
-    let status: HistoryStatus
-
-    var body: some View {
-        Text(status.title)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(status.textColor)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(status.background)
-            .clipShape(Capsule())
-    }
-}
-
-private struct LocationPinIcon: View {
-    var body: some View {
-        LocationPinShape()
-            .fill(AppColors.subText)
-            .accessibilityHidden(true)
-    }
-}
-
-private struct LocationPinShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-
-        path.move(to: CGPoint(x: 8.9568, y: 8.96583))
-        path.addLine(to: CGPoint(x: 5.24813, y: 12.6758))
-        path.addLine(to: CGPoint(x: 1.53945, y: 8.96583))
-        path.addCurve(to: CGPoint(x: 0.174938, y: 6.58583),
-                      control1: CGPoint(x: 0.863025, y: 8.29695),
-                      control2: CGPoint(x: 0.408188, y: 7.50361))
-        path.addCurve(to: CGPoint(x: 0.174938, y: 3.92583),
-                      control1: CGPoint(x: -0.0583125, y: 5.69917),
-                      control2: CGPoint(x: -0.0583125, y: 4.8125))
-        path.addCurve(to: CGPoint(x: 1.53362, y: 1.54),
-                      control1: CGPoint(x: 0.408188, y: 3.00806),
-                      control2: CGPoint(x: 0.861081, y: 2.21278))
-        path.addCurve(to: CGPoint(x: 3.9186, y: 0.169168),
-                      control1: CGPoint(x: 2.20616, y: 0.867224),
-                      control2: CGPoint(x: 3.00115, y: 0.410279))
-        path.addCurve(to: CGPoint(x: 6.57765, y: 0.169168),
-                      control1: CGPoint(x: 4.80495, y: -0.0563879),
-                      control2: CGPoint(x: 5.6913, y: -0.0563879))
-        path.addCurve(to: CGPoint(x: 8.96263, y: 1.54),
-                      control1: CGPoint(x: 7.4951, y: 0.410279),
-                      control2: CGPoint(x: 8.29009, y: 0.867224))
-        path.addCurve(to: CGPoint(x: 10.3213, y: 3.92583),
-                      control1: CGPoint(x: 9.63517, y: 2.21278),
-                      control2: CGPoint(x: 10.0881, y: 3.00806))
-        path.addCurve(to: CGPoint(x: 10.3213, y: 6.58583),
-                      control1: CGPoint(x: 10.5546, y: 4.8125),
-                      control2: CGPoint(x: 10.5546, y: 5.69917))
-        path.addCurve(to: CGPoint(x: 8.9568, y: 8.96583),
-                      control1: CGPoint(x: 10.0881, y: 7.50361),
-                      control2: CGPoint(x: 9.63323, y: 8.29695))
-        path.closeSubpath()
-
-        path.move(to: CGPoint(x: 5.24813, y: 6.4225))
-        path.addCurve(to: CGPoint(x: 5.83125, y: 6.265),
-                      control1: CGPoint(x: 5.45805, y: 6.4225),
-                      control2: CGPoint(x: 5.65242, y: 6.37))
-        path.addCurve(to: CGPoint(x: 6.25693, y: 5.83917),
-                      control1: CGPoint(x: 6.01008, y: 6.16),
-                      control2: CGPoint(x: 6.15197, y: 6.01806))
-        path.addCurve(to: CGPoint(x: 6.41437, y: 5.25583),
-                      control1: CGPoint(x: 6.36189, y: 5.66028),
-                      control2: CGPoint(x: 6.41437, y: 5.46583))
-        path.addCurve(to: CGPoint(x: 6.25693, y: 4.6725),
-                      control1: CGPoint(x: 6.41437, y: 5.04583),
-                      control2: CGPoint(x: 6.36189, y: 4.85139))
-        path.addCurve(to: CGPoint(x: 5.83125, y: 4.24667),
-                      control1: CGPoint(x: 6.15197, y: 4.49361),
-                      control2: CGPoint(x: 6.01008, y: 4.35167))
-        path.addCurve(to: CGPoint(x: 5.24813, y: 4.08917),
-                      control1: CGPoint(x: 5.65242, y: 4.14167),
-                      control2: CGPoint(x: 5.45805, y: 4.08917))
-        path.addCurve(to: CGPoint(x: 4.665, y: 4.24667),
-                      control1: CGPoint(x: 5.0382, y: 4.08917),
-                      control2: CGPoint(x: 4.84382, y: 4.14167))
-        path.addCurve(to: CGPoint(x: 4.23932, y: 4.6725),
-                      control1: CGPoint(x: 4.48618, y: 4.35167),
-                      control2: CGPoint(x: 4.34428, y: 4.49361))
-        path.addCurve(to: CGPoint(x: 4.08187, y: 5.25583),
-                      control1: CGPoint(x: 4.13436, y: 4.85139),
-                      control2: CGPoint(x: 4.08187, y: 5.04583))
-        path.addCurve(to: CGPoint(x: 4.23932, y: 5.83917),
-                      control1: CGPoint(x: 4.08187, y: 5.46583),
-                      control2: CGPoint(x: 4.13436, y: 5.66028))
-        path.addCurve(to: CGPoint(x: 4.665, y: 6.265),
-                      control1: CGPoint(x: 4.34428, y: 6.01806),
-                      control2: CGPoint(x: 4.48618, y: 6.16))
-        path.addCurve(to: CGPoint(x: 5.24813, y: 6.4225),
-                      control1: CGPoint(x: 4.84382, y: 6.37),
-                      control2: CGPoint(x: 5.0382, y: 6.4225))
-        path.closeSubpath()
-
-        let scaleX = rect.width / 11.0
-        let scaleY = rect.height / 13.0
-        let transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
-        return path.applying(transform)
     }
 }
 
 private struct SearchIcon: View {
     var body: some View {
         SearchIconShape()
-            .fill(AppColors.subText)
+            .fill(Color(hex: "#4B5563"))
             .accessibilityHidden(true)
     }
 }
@@ -452,46 +228,8 @@ private struct SearchIconShape: Shape {
 
         let scaleX = rect.width / 17.0
         let scaleY = rect.height / 17.0
-        let transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
-        return path.applying(transform)
+        return path.applying(CGAffineTransform(scaleX: scaleX, y: scaleY))
     }
-}
-
-private enum HistoryStatus {
-    case done
-    case canceled
-
-    var title: String {
-        switch self {
-        case .done: return "완료"
-        case .canceled: return "취소됨"
-        }
-    }
-
-    var background: Color {
-        switch self {
-        case .done: return Color(red: 0.88, green: 0.98, blue: 0.90)
-        case .canceled: return Color(red: 0.98, green: 0.90, blue: 0.90)
-        }
-    }
-
-    var textColor: Color {
-        switch self {
-        case .done: return Color(red: 0.18, green: 0.65, blue: 0.33)
-        case .canceled: return Color(red: 0.83, green: 0.26, blue: 0.26)
-        }
-    }
-}
-
-private struct HistoryItem: Identifiable {
-    let id = UUID()
-    let title: String
-    let dateText: String
-    let timeText: String
-    let memberCount: Int
-    let extraCount: Int
-    let location: String
-    let status: HistoryStatus
 }
 
 #Preview {
