@@ -7,6 +7,7 @@ struct HomeView: View {
     }
 
     @State private var selectedSegment: HomeSegment = .ongoing
+    @State private var showLoginView = false
 
     private let ongoing: [HomePromise] = [
         .init(title: "대학 동기 모임", date: "2024-12-15", time: "19:00", people: 4, place: "강남역 4번 출구 근처", statusText: "진행중", confirmedPlace: nil),
@@ -14,9 +15,9 @@ struct HomeView: View {
     ]
 
     private let scheduled: [HomePromise] = [
-        .init(title: "생일 파티", date: "2024-12-20", time: "18:00", people: 3, place: "역삼역 2번 출구 근처", statusText: "확정", confirmedPlace: "루프탑 바 스카이"),
-        .init(title: "저녁 약속", date: "2024-12-22", time: "19:30", people: 6, place: "강남역 맛집", statusText: "확정", confirmedPlace: "모던 이탈리안 키친"),
-        .init(title: "영화 모임", date: "2024-12-24", time: "20:00", people: 4, place: "삼성역 코엑스", statusText: "확정", confirmedPlace: "CGV 코엑스")
+        .init(title: "생일 파티", date: "2024-12-20", time: "18:00", people: 3, place: "역삼역 2번 출구 근처", statusText: "확정됨", confirmedPlace: "루프탑 바 스카이"),
+        .init(title: "저녁 약속", date: "2024-12-22", time: "19:30", people: 6, place: "강남역 맛집", statusText: "확정됨", confirmedPlace: "모던 이탈리안 키친"),
+        .init(title: "영화 모임", date: "2024-12-24", time: "20:00", people: 4, place: "삼성역 코엑스", statusText: "확정됨", confirmedPlace: "CGV 코엑스")
     ]
 
     var body: some View {
@@ -66,6 +67,31 @@ struct HomeView: View {
             .buttonStyle(.plain)
             .padding(.trailing, 28)
             .padding(.bottom, 108)
+        }
+        .overlay(alignment: .bottomLeading) {
+            Button {
+                showLoginView = true
+            } label: {
+                Text("로그인")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color(hex: "#6B7280"))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.9))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color(hex: "#E5E7EB"), lineWidth: 1)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 16)
+            .padding(.bottom, 106)
+        }
+        .fullScreenCover(isPresented: $showLoginView) {
+            NavigationStack {
+                LoginView()
+            }
         }
     }
 }

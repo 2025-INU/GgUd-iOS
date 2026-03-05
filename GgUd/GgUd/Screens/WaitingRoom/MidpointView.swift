@@ -47,7 +47,7 @@ struct MidpointView: View {
 
                 GeometryReader { proxy in
                     let height = proxy.size.height
-                    let sheetHeight = min(420, height * 0.62)
+                    let sheetHeight = min(360, height * 0.52)
                     let collapsedY = height - 160
                     let expandedY = height - sheetHeight
                     let baseY = isSheetExpanded ? expandedY : collapsedY
@@ -70,10 +70,10 @@ struct MidpointView: View {
                         .gesture(
                             DragGesture()
                                 .updating($dragOffset) { value, state, _ in
-                                    state = value.translation.height
+                                    state = min(max(value.translation.height, -90), 90)
                                 }
                                 .onEnded { value in
-                                    let threshold: CGFloat = 80
+                                    let threshold: CGFloat = 120
                                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                                         if value.translation.height < -threshold {
                                             isSheetExpanded = true
@@ -130,9 +130,6 @@ struct MidpointView: View {
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(AppColors.subText)
 
-            Image(systemName: "person.fill")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(AppColors.subText)
         }
         .frame(maxWidth: .infinity)
         .padding(16)

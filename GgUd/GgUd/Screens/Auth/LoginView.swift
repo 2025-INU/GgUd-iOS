@@ -97,7 +97,7 @@ struct LoginView: View {
             }
         }
         .navigationBarHidden(true)
-        .toolbar(.visible, for: .tabBar)
+        .toolbar(.hidden, for: .tabBar)
     }
 }
 
