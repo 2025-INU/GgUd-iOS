@@ -40,6 +40,7 @@ struct WaitingRoomView: View {
                         timeText: "19:52",
                         subtitle: "약속이 생성되었습니다!"
                     )
+                    .padding(.horizontal, 20)
                     .padding(.bottom, 6)
 
                     VStack(alignment: .leading, spacing: 16) {

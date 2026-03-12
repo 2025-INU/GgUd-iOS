@@ -74,7 +74,7 @@ private struct CustomTabBar: View {
             .background(Color.white)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 81, alignment: .top)
+        .frame(height: 74, alignment: .top)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(Color(red: 0.86, green: 0.88, blue: 0.90))
@@ -103,8 +103,8 @@ private struct CustomTabBar: View {
                     Text(title)
                         .font(.system(size: 12, weight: .semibold))
                 }
-                .padding(.top, 12)
-                .padding(.bottom, 12)
+                .padding(.top, 9)
+                .padding(.bottom, 9)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .foregroundStyle(isSelected ? accent : unselected)

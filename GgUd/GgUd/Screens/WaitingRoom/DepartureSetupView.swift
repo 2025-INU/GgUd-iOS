@@ -242,6 +242,7 @@ struct DepartureSetupView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color(red: 0.62, green: 0.90, blue: 0.72), lineWidth: 1)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var transportGrid: some View {
