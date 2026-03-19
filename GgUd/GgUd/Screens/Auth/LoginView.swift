@@ -3,10 +3,22 @@
 //  GgUd
 //
 //
+// iOS SDK
+import KakaoSDKCommon
+import KakaoSDKAuth
+import KakaoSDKUser
+
 
 import SwiftUI
 
 struct LoginView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var isLoggingIn = false
+    @State private var alertMessage = ""
+    @State private var showAlert = false
+
+    
     var body: some View {
         ZStack {
             Color.white.ignoresSafeArea()
@@ -62,13 +74,13 @@ struct LoginView: View {
                     }
 
                     VStack(spacing: 12) {
-                        Button(action: {}) {
+                        Button(action: loginWithKakao) {
                             HStack(spacing: 10) {
                                 Image(systemName: "bubble.left.and.bubble.right.fill")
                                     .font(.system(size: 18, weight: .bold))
                                     .foregroundStyle(.white)
 
-                                Text("카카오톡으로 시작하기")
+                                Text(isLoggingIn ? "로그인 중..." : "카카오톡으로 시작하기")
                                     .font(.system(size: 16, weight: .bold))
                                     .foregroundStyle(.white)
                             }
@@ -86,6 +98,7 @@ struct LoginView: View {
                             .shadow(color: Color.black.opacity(0.12), radius: 12, x: 0, y: 8)
                         }
                         .buttonStyle(.plain)
+                        .disabled(isLoggingIn)
 
                         Text("카카오톡 계정으로 간편하게 시작하세요")
                             .font(.system(size: 13, weight: .regular))
@@ -98,6 +111,82 @@ struct LoginView: View {
         }
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+        .alert("카카오 로그인", isPresented: $showAlert) {
+            Button("확인", role: .cancel) {}
+        } message: {
+            Text(alertMessage)
+        }
+    }
+
+    private func loginWithKakao() {
+        isLoggingIn = true
+        print("[KakaoLogin] start")
+        print("[KakaoLogin] isKakaoTalkLoginAvailable:", UserApi.isKakaoTalkLoginAvailable())
+
+        if UserApi.isKakaoTalkLoginAvailable() {
+            print("[KakaoLogin] trying loginWithKakaoTalk")
+            UserApi.shared.loginWithKakaoTalk { token, error in
+                handleLoginResult(token: token, error: error, fallbackToAccount: true)
+            }
+        } else {
+            print("[KakaoLogin] fallback to loginWithKakaoAccount")
+            loginWithKakaoAccount()
+        }
+    }
+
+    private func loginWithKakaoAccount() {
+        print("[KakaoLogin] trying loginWithKakaoAccount")
+        UserApi.shared.loginWithKakaoAccount { token, error in
+            handleLoginResult(token: token, error: error, fallbackToAccount: false)
+        }
+    }
+
+    private func handleLoginResult(token: OAuthToken?, error: Error?, fallbackToAccount: Bool) {
+        if let error {
+            print("[KakaoLogin] login error:", error.localizedDescription)
+            print("[KakaoLogin] full error:", error)
+
+            if fallbackToAccount {
+                print("[KakaoLogin] loginWithKakaoTalk failed, retrying with KakaoAccount")
+                loginWithKakaoAccount()
+                return
+            }
+
+            isLoggingIn = false
+            alertMessage = "로그인에 실패했습니다.\n\(error.localizedDescription)"
+            showAlert = true
+            return
+        }
+
+        guard token != nil else {
+            print("[KakaoLogin] token is nil")
+            isLoggingIn = false
+            alertMessage = "토큰을 받지 못했습니다."
+            showAlert = true
+            return
+        }
+
+        print("[KakaoLogin] token received")
+
+        UserApi.shared.me { user, error in
+            isLoggingIn = false
+
+            if let error {
+                print("[KakaoLogin] me() error:", error.localizedDescription)
+                print("[KakaoLogin] me() full error:", error)
+                alertMessage = "사용자 정보를 가져오지 못했습니다.\n\(error.localizedDescription)"
+                showAlert = true
+                return
+            }
+
+            let nickname = user?.kakaoAccount?.profile?.nickname ?? "사용자"
+            print("[KakaoLogin] me() success")
+            print("[KakaoLogin] user id:", user?.id ?? 0)
+            print("[KakaoLogin] nickname:", nickname)
+            alertMessage = "\(nickname) 로그인 성공"
+            showAlert = true
+            dismiss()
+        }
     }
 }
 
