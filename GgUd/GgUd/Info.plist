@@ -9,7 +9,7 @@
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>kakaoa0773999bd309278a1ab955b9b21fb0b</string>
+				<string>kakao5084e1974e29bdf05279f19629dadfcb</string>
 			</array>
 		</dict>
 	</array>
@@ -20,7 +20,12 @@
 		<string>kakaoplus</string>
 		<string>kakaotalk</string>
 	</array>
-	<key>현재 위치를 출발 위치로 설정하기 위해 위치 접근 권한이 필요합니다.</key>
-	<string></string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>현재 위치를 지도 중심과 출발 위치로 설정하기 위해 위치 접근 권한이 필요합니다.</string>
 </dict>
 </plist>

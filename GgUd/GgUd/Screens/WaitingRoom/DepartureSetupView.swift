@@ -6,9 +6,13 @@
 
 import SwiftUI
 import CoreLocation
+import Combine
 
 struct DepartureSetupView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var userSession: UserSessionStore
+
+    let promiseId: Int64
 
     @State private var selectedTransport: TransportOption? = nil
     @State private var selectedLocation: String? = nil
@@ -17,6 +21,8 @@ struct DepartureSetupView: View {
     @State private var showLocationAlert: Bool = false
     @State private var locationAlertMessage: String = ""
     @State private var navigateToWaitingRoom: Bool = false
+    @State private var isSubmitting = false
+    @State private var summary: PromiseSummaryResponse?
 
     private let transports: [TransportOption] = [
         .init(title: "도보", systemImage: "figure.walk", color: Color(red: 0.22, green: 0.80, blue: 0.44)),
@@ -57,8 +63,14 @@ struct DepartureSetupView: View {
 
                         transportGrid
 
-                        Button(action: { navigateToWaitingRoom = true }) {
+                        Button(action: submitDeparture) {
                             Text("약속 참여하기")
+                                .overlay {
+                                    if isSubmitting {
+                                        ProgressView()
+                                            .tint(.white)
+                                    }
+                                }
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundStyle(canJoin ? Color.white : Color.white.opacity(0.6))
                                 .frame(maxWidth: .infinity)
@@ -82,7 +94,7 @@ struct DepartureSetupView: View {
                         .disabled(!canJoin)
 
                         NavigationLink(
-                            destination: WaitingRoomView(),
+                            destination: WaitingRoomView(promiseId: promiseId),
                             isActive: $navigateToWaitingRoom
                         ) {
                             EmptyView()
@@ -102,10 +114,17 @@ struct DepartureSetupView: View {
         }
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+        .task(id: promiseId) {
+            await loadSummary()
+        }
         .onChange(of: locationManager.address) { newValue in
             guard let newValue else { return }
             selectedLocation = newValue
             addressText = newValue
+        }
+        .onReceive(locationManager.$coordinate) { newValue in
+            guard let newValue else { return }
+            selectedCoordinate = newValue
         }
         .onChange(of: locationManager.errorMessage) { newValue in
             guard let newValue else { return }
@@ -141,15 +160,15 @@ struct DepartureSetupView: View {
                     )
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("대학 동기 모임")
+                    Text(summary?.title ?? "약속 불러오는 중")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(AppColors.text)
 
-                    Text("2024-12-15 · 19:00")
+                    Text(summaryDateTimeText)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(AppColors.subText)
 
-                    Text("주최자: 김민수")
+                    Text("주최자: \(summary?.hostNickname ?? "-")")
                         .font(.system(size: 12, weight: .regular))
                         .foregroundStyle(AppColors.subText)
                 }
@@ -180,6 +199,15 @@ struct DepartureSetupView: View {
 
     private var canJoin: Bool {
         selectedLocation != nil && selectedTransport != nil
+    }
+
+    @State private var selectedCoordinate: CLLocationCoordinate2D? = nil
+
+    private var summaryDateTimeText: String {
+        guard let dateString = summary?.promiseDateTime,
+              let date = DepartureDateFormatter.isoWithFractional.date(from: dateString) ?? ISO8601DateFormatter().date(from: dateString)
+        else { return "- · --:--" }
+        return "\(DepartureDateFormatter.date.string(from: date)) · \(DepartureDateFormatter.time.string(from: date))"
     }
 
     private var currentLocationButton: some View {
@@ -282,6 +310,145 @@ struct DepartureSetupView: View {
         }
         .buttonStyle(.plain)
     }
+
+    @MainActor
+    private func loadSummary() async {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else { return }
+
+        await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getPromiseSummary(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: userSession.backendTokenType ?? "Bearer"
+            ) { result in
+                DispatchQueue.main.async {
+                    if case let .success(summary) = result {
+                        self.summary = summary
+                    }
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    private func friendlyLocationErrorMessage(_ error: Error) -> String {
+        if let clError = error as? CLError {
+            switch clError.code {
+            case .locationUnknown:
+                return "현재 위치를 아직 찾지 못했어요. 시뮬레이터라면 Features > Location에서 위치를 먼저 설정한 뒤 다시 시도해주세요."
+            case .denied:
+                return "위치 권한이 꺼져 있어요. 설정에서 위치 권한을 허용한 뒤 다시 시도해주세요."
+            case .network:
+                return "네트워크 문제로 위치를 가져오지 못했어요. 잠시 후 다시 시도해주세요."
+            default:
+                return "위치 정보를 가져오지 못했어요. 잠시 후 다시 시도해주세요."
+            }
+        }
+
+        if let geocodeError = error as? CLError, geocodeError.code == .geocodeFoundNoResult {
+            return "입력한 주소를 찾지 못했어요. 주소를 조금 더 자세히 입력해주세요."
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == kCLErrorDomain && nsError.code == CLError.locationUnknown.rawValue {
+            return "현재 위치를 아직 찾지 못했어요. 시뮬레이터라면 Features > Location에서 위치를 먼저 설정한 뒤 다시 시도해주세요."
+        }
+
+        return "위치 정보를 처리하지 못했어요. 잠시 후 다시 시도해주세요."
+    }
+
+    private func submitDeparture() {
+        guard canJoin else { return }
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            locationAlertMessage = "로그인 정보가 없습니다. 다시 로그인해주세요."
+            showLocationAlert = true
+            return
+        }
+
+        isSubmitting = true
+
+        let finishSubmission: (Result<(Double, Double, String?), Error>) -> Void = { result in
+            switch result {
+            case let .success((latitude, longitude, address)):
+                PromiseAPIClient.shared.updateDeparture(
+                    promiseId: promiseId,
+                    accessToken: accessToken,
+                    tokenType: userSession.backendTokenType ?? "Bearer",
+                    latitude: latitude,
+                    longitude: longitude,
+                    address: address
+                ) { apiResult in
+                    DispatchQueue.main.async {
+                        isSubmitting = false
+                        switch apiResult {
+                        case .success:
+                            navigateToWaitingRoom = true
+                        case let .failure(error):
+                            locationAlertMessage = friendlyLocationErrorMessage(error)
+                            showLocationAlert = true
+                        }
+                    }
+                }
+            case let .failure(error):
+                DispatchQueue.main.async {
+                    isSubmitting = false
+                    locationAlertMessage = friendlyLocationErrorMessage(error)
+                    showLocationAlert = true
+                }
+            }
+        }
+
+        if let selectedCoordinate {
+            finishSubmission(.success((selectedCoordinate.latitude, selectedCoordinate.longitude, selectedLocation)))
+            return
+        }
+
+        let trimmedAddress = addressText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAddress.isEmpty else {
+            isSubmitting = false
+            locationAlertMessage = "출발 위치를 입력해주세요."
+            showLocationAlert = true
+            return
+        }
+
+        CLGeocoder().geocodeAddressString(trimmedAddress) { placemarks, error in
+            if let error {
+                finishSubmission(.failure(error))
+                return
+            }
+
+            guard let coordinate = placemarks?.first?.location?.coordinate else {
+                finishSubmission(.failure(AuthAPIError.server(statusCode: 0, message: "주소를 좌표로 변환하지 못했습니다.")))
+                return
+            }
+
+            finishSubmission(.success((coordinate.latitude, coordinate.longitude, trimmedAddress)))
+        }
+    }
+}
+
+private enum DepartureDateFormatter {
+    static let date: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    static let time: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    static let isoWithFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 private struct TransportOption: Identifiable, Equatable {
@@ -293,6 +460,7 @@ private struct TransportOption: Identifiable, Equatable {
 
 private final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var address: String? = nil
+    @Published var coordinate: CLLocationCoordinate2D? = nil
     @Published var errorMessage: String? = nil
 
     private let manager = CLLocationManager()
@@ -325,6 +493,7 @@ private final class LocationManager: NSObject, ObservableObject, CLLocationManag
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.first else { return }
+        coordinate = location.coordinate
         geocoder.reverseGeocodeLocation(location) { [weak self] placemarks, _ in
             guard let self else { return }
             if let placemark = placemarks?.first {
@@ -344,5 +513,5 @@ private final class LocationManager: NSObject, ObservableObject, CLLocationManag
 }
 
 #Preview {
-    DepartureSetupView()
+    DepartureSetupView(promiseId: 1)
 }

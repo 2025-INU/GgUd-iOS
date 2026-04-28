@@ -8,20 +8,16 @@
 import SwiftUI
 
 struct WaitingRoomView: View {
-
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var userSession: UserSessionStore
 
-    @State private var showDepartureSheet = false
+    let promiseId: Int64
+
     @State private var navigateToMidpoint: Bool = false
-
-    // 더미
-    private let members: [WaitingMember] = [
-        .init(name: "김민수 (나)", statusText: "위치 입력 완료", isDone: true),
-        .init(name: "이지은", statusText: "위치 입력 완료", isDone: true),
-        .init(name: "박준호", statusText: "위치 입력 완료", isDone: true),
-        .init(name: "최수영", statusText: "위치 입력 완료", isDone: true),
-        .init(name: "정민재", statusText: "위치 입력 완료", isDone: true)
-    ]
+    @State private var members: [WaitingMember] = []
+    @State private var summary: PromiseSummaryResponse?
+    @State private var isLoading = false
+    @State private var loadError: String?
 
     
     var body: some View {
@@ -35,9 +31,9 @@ struct WaitingRoomView: View {
 
                 ScrollView {
                     WaitingRoomSummaryCard(
-                        title: "대학 동기 모임",
-                        dateText: "2025-11-28",
-                        timeText: "19:52",
+                        title: summary?.title ?? "약속 불러오는 중",
+                        dateText: formattedSummaryDate,
+                        timeText: formattedSummaryTime,
                         subtitle: "약속이 생성되었습니다!"
                     )
                     .padding(.horizontal, 20)
@@ -60,7 +56,7 @@ struct WaitingRoomView: View {
 
                         // 3) 참여한 친구
                         HStack {
-                            Text("참여한 친구")
+                        Text("참여한 친구")
                                 .font(.system(size: 18, weight: .bold))
                                 .foregroundStyle(AppColors.text)
 
@@ -72,15 +68,31 @@ struct WaitingRoomView: View {
                         }
                         .padding(.top, 12)
 
-                        ForEach(members) { m in
-                            WaitingMemberRowCard(member: m)   // 새 피그마 카드
+                        if isLoading && members.isEmpty {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 24)
+                        } else if let loadError {
+                            Text(loadError)
+                                .font(.system(size: 14))
+                                .foregroundStyle(.red)
+                                .padding(.vertical, 8)
+                        } else {
+                            ForEach(members) { m in
+                                NavigationLink {
+                                    DepartureSetupView(promiseId: promiseId)
+                                } label: {
+                                    WaitingMemberRowCard(member: m)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
 
                         completionCTA
                             .padding(.top, 8)
 
                         NavigationLink(
-                            destination: MidpointView(),
+                            destination: MidpointView(promiseId: promiseId),
                             isActive: $navigateToMidpoint
                         ) {
                             EmptyView()
@@ -96,15 +108,30 @@ struct WaitingRoomView: View {
 
                 Spacer()
             }
-            .disabled(showDepartureSheet) // ✅ 팝업 뜨면 뒤 터치 막기
         }
-        .animation(.easeInOut(duration: 0.2), value: showDepartureSheet)
+        .task(id: promiseId) {
+            await loadWaitingRoom()
+        }
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
     }
     
     private var allMembersDone: Bool {
         members.allSatisfy { $0.isDone }
+    }
+
+    private var formattedSummaryDate: String {
+        guard let dateString = summary?.promiseDateTime,
+              let date = ISO8601DateFormatter.withFractional.date(from: dateString) ?? ISO8601DateFormatter().date(from: dateString)
+        else { return "-" }
+        return WaitingRoomDateFormatter.date.string(from: date)
+    }
+
+    private var formattedSummaryTime: String {
+        guard let dateString = summary?.promiseDateTime,
+              let date = ISO8601DateFormatter.withFractional.date(from: dateString) ?? ISO8601DateFormatter().date(from: dateString)
+        else { return "--:--" }
+        return WaitingRoomDateFormatter.time.string(from: date)
     }
 
     private var completionCTA: some View {
@@ -140,4 +167,88 @@ struct WaitingRoomView: View {
         )
     }
 
+    @MainActor
+    private func loadWaitingRoom() async {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            loadError = "로그인 정보가 없습니다."
+            return
+        }
+
+        isLoading = true
+        loadError = nil
+
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+
+        async let summaryResult: Result<PromiseSummaryResponse, Error> = withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getPromiseSummary(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        async let participantsResult: Result<[PromiseParticipantResponse], Error> = withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getParticipants(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        let (summaryResultValue, participantsResultValue) = await (summaryResult, participantsResult)
+
+        switch summaryResultValue {
+        case let .success(summary):
+            self.summary = summary
+        case let .failure(error):
+            loadError = error.localizedDescription
+        }
+
+        switch participantsResultValue {
+        case let .success(participants):
+            members = participants.map { participant in
+                let isMe = participant.userId == userSession.kakaoUserId
+                return WaitingMember(
+                    name: (participant.nickname ?? "사용자") + (isMe ? " (나)" : ""),
+                    statusText: participant.locationSubmitted == true ? "위치 입력 완료" : "위치 입력 대기중",
+                    isDone: participant.locationSubmitted == true
+                )
+            }
+        case let .failure(error):
+            loadError = error.localizedDescription
+        }
+
+        isLoading = false
+    }
+
+}
+
+private enum WaitingRoomDateFormatter {
+    static let date: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    static let time: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+}
+
+private extension ISO8601DateFormatter {
+    static let withFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }

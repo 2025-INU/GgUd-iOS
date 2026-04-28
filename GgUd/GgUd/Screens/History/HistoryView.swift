@@ -1,17 +1,12 @@
 import SwiftUI
 
 struct HistoryView: View {
+    @EnvironmentObject private var userSession: UserSessionStore
     @State private var showSearchBar = false
     @State private var keyword = ""
     @State private var isLoading = false
-
-    private let items: [HistoryItem] = [
-        .init(title: "친구들과 카페 모임", dateText: "2024년 1월 10일", timeText: "오후 3:00", memberCount: 4, extraCount: 0, location: "홍대 스타벅스", status: .done),
-        .init(title: "회사 동료 저녁식사", dateText: "2024년 1월 8일", timeText: "오후 7:30", memberCount: 6, extraCount: 2, location: "강남역 맛집", status: .done),
-        .init(title: "가족 모임", dateText: "2024년 1월 5일", timeText: "오후 12:00", memberCount: 8, extraCount: 4, location: "집", status: .done),
-        .init(title: "동창회", dateText: "2024년 1월 3일", timeText: "오후 6:00", memberCount: 12, extraCount: 8, location: "신촌 음식점", status: .canceled),
-        .init(title: "영화 관람", dateText: "2023년 12월 28일", timeText: "오후 8:00", memberCount: 3, extraCount: 0, location: "CGV 강남", status: .done)
-    ]
+    @State private var loadError: String?
+    @State private var items: [HistoryItem] = []
 
     private var filteredItems: [HistoryItem] {
         let q = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -38,6 +33,13 @@ struct HistoryView: View {
                             .foregroundStyle(Color(hex: "#6B7280"))
                             .frame(maxWidth: .infinity)
                             .padding(.top, 40)
+                    } else if let loadError {
+                        Text(loadError)
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(Color(hex: "#6B7280"))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
                     } else if filteredItems.isEmpty {
                         Text("표시할 히스토리가 없습니다.")
                             .font(.system(size: 14, weight: .regular))
@@ -57,6 +59,9 @@ struct HistoryView: View {
         .background(Color.white)
         .navigationBarHidden(true)
         .animation(.easeInOut(duration: 0.2), value: showSearchBar)
+        .task(id: userSession.backendAccessToken) {
+            await loadHistory()
+        }
     }
 
     private var historyHeader: some View {
@@ -123,6 +128,47 @@ struct HistoryView: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 16)
                 .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+    }
+
+    @MainActor
+    private func loadHistory() async {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            items = []
+            loadError = "로그인이 필요합니다."
+            return
+        }
+
+        isLoading = true
+        loadError = nil
+
+        await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getMyPromises(
+                accessToken: accessToken,
+                tokenType: userSession.backendTokenType ?? "Bearer",
+                page: 0,
+                size: 100
+            ) { result in
+                DispatchQueue.main.async {
+                    isLoading = false
+
+                    switch result {
+                    case let .success(promises):
+                        items = promises
+                            .filter { promise in
+                                let status = (promise.status ?? "").uppercased()
+                                return status != "CANCELED" && status != "CANCELLED"
+                            }
+                            .map(HistoryItem.init)
+                        loadError = nil
+                    case .failure:
+                        items = []
+                        loadError = "히스토리를 불러오지 못했습니다."
+                    }
+
+                    continuation.resume()
+                }
             }
         }
     }
@@ -234,4 +280,55 @@ private struct SearchIconShape: Shape {
 
 #Preview {
     HistoryView()
+        .environmentObject(UserSessionStore())
+}
+
+private extension HistoryItem {
+    init(_ promise: BackendPromise) {
+        self.init(
+            title: promise.title ?? "제목 없음",
+            dateText: HistoryDateFormatter.dateText(from: promise.promiseDateTime),
+            timeText: HistoryDateFormatter.timeText(from: promise.promiseDateTime),
+            memberCount: max(1, Int(promise.participantCount ?? 1)),
+            location: promise.confirmedPlaceName ?? "장소 미정",
+            status: .done
+        )
+    }
+}
+
+private enum HistoryDateFormatter {
+    static func parsedDate(from value: String?) -> Date? {
+        guard let value else { return nil }
+
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoFormatter.date(from: value) { return date }
+
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        if let date = isoFormatter.date(from: value) { return date }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter.date(from: value)
+    }
+
+    static func dateText(from value: String?) -> String {
+        guard let date = parsedDate(from: value) else { return "-" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "yyyy년 M월 d일"
+        return formatter.string(from: date)
+    }
+
+    static func timeText(from value: String?) -> String {
+        guard let date = parsedDate(from: value) else { return "--:--" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "a h:mm"
+        return formatter.string(from: date)
+    }
 }

@@ -8,16 +8,25 @@
 import SwiftUI
 import KakaoSDKCommon
 import KakaoSDKAuth
+#if canImport(KakaoMapsSDK)
+import KakaoMapsSDK
+#endif
 
 @main
 struct GgUdApp: App {
+    @StateObject private var userSession = UserSessionStore()
+
     init() {
-        KakaoSDK.initSDK(appKey: "a0773999bd309278a1ab955b9b21fb0b")
+        KakaoSDK.initSDK(appKey: "5084e1974e29bdf05279f19629dadfcb")
+#if canImport(KakaoMapsSDK)
+        SDKInitializer.InitSDK(appKey: "5084e1974e29bdf05279f19629dadfcb")
+#endif
     }
 
     var body: some Scene {
         WindowGroup {
             AppRootView()
+                .environmentObject(userSession)
                 .onOpenURL { url in
                     if AuthApi.isKakaoTalkLoginUrl(url) {
                         _ = AuthController.handleOpenUrl(url: url)

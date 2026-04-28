@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		861D42162F9F550A0067E5A4 /* KakaoMapsSDK-SPM-Dynamic in Frameworks */ = {isa = PBXBuildFile; productRef = 861D42152F9F550A0067E5A4 /* KakaoMapsSDK-SPM-Dynamic */; };
+		861D42172F9F550A0067E5A4 /* KakaoMapsSDK-SPM-Dynamic in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 861D42152F9F550A0067E5A4 /* KakaoMapsSDK-SPM-Dynamic */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		86F147D02F6BAEDA00E14783 /* KakaoSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 86F147CF2F6BAEDA00E14783 /* KakaoSDK */; };
 		86F147D22F6BAEE400E14783 /* KakaoSDKAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 86F147D12F6BAEE400E14783 /* KakaoSDKAuth */; };
 		86F147D42F6BAEEF00E14783 /* KakaoSDKUser in Frameworks */ = {isa = PBXBuildFile; productRef = 86F147D32F6BAEEF00E14783 /* KakaoSDKUser */; };
@@ -29,6 +31,20 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		861D42182F9F550A0067E5A4 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				861D42172F9F550A0067E5A4 /* KakaoMapsSDK-SPM-Dynamic in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		8631F0F02F18F85B006FFC40 /* GgUd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GgUd.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8631F0FD2F18F85D006FFC40 /* GgUdTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GgUdTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -42,6 +58,9 @@
 				Assets.xcassets,
 				Components/AppBar.swift,
 				ContentView.swift,
+				Core/Auth/AuthAPIClient.swift,
+				Core/Auth/PromiseAPIClient.swift,
+				Core/Auth/UserSessionStore.swift,
 				Core/Components/CardContent.swift,
 				Core/Components/CardRow.swift,
 				Core/Components/HomeAppointmentCardModel.swift,
@@ -120,6 +139,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				861D42162F9F550A0067E5A4 /* KakaoMapsSDK-SPM-Dynamic in Frameworks */,
 				86F147D02F6BAEDA00E14783 /* KakaoSDK in Frameworks */,
 				86F147D22F6BAEE400E14783 /* KakaoSDKAuth in Frameworks */,
 				86F147D42F6BAEEF00E14783 /* KakaoSDKUser in Frameworks */,
@@ -181,6 +201,7 @@
 				8631F0EC2F18F85B006FFC40 /* Sources */,
 				8631F0ED2F18F85B006FFC40 /* Frameworks */,
 				8631F0EE2F18F85B006FFC40 /* Resources */,
+				861D42182F9F550A0067E5A4 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -191,6 +212,7 @@
 				86F147CF2F6BAEDA00E14783 /* KakaoSDK */,
 				86F147D12F6BAEE400E14783 /* KakaoSDKAuth */,
 				86F147D32F6BAEEF00E14783 /* KakaoSDKUser */,
+				861D42152F9F550A0067E5A4 /* KakaoMapsSDK-SPM-Dynamic */,
 			);
 			productName = GgUd;
 			productReference = 8631F0F02F18F85B006FFC40 /* GgUd.app */;
@@ -277,6 +299,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				86F147CD2F6BA96500E14783 /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */,
+				861D42122F9F547B0067E5A4 /* XCRemoteSwiftPackageReference "KakaoMapsSDK-SPM" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8631F0F12F18F85B006FFC40 /* Products */;
@@ -637,6 +660,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		861D42122F9F547B0067E5A4 /* XCRemoteSwiftPackageReference "KakaoMapsSDK-SPM" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kakao-mapsSDK/KakaoMapsSDK-SPM.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.12.10;
+			};
+		};
 		86F147CD2F6BA96500E14783 /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/kakao/kakao-ios-sdk";
@@ -648,6 +679,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		861D42152F9F550A0067E5A4 /* KakaoMapsSDK-SPM-Dynamic */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 861D42122F9F547B0067E5A4 /* XCRemoteSwiftPackageReference "KakaoMapsSDK-SPM" */;
+			productName = "KakaoMapsSDK-SPM-Dynamic";
+		};
 		86F147CF2F6BAEDA00E14783 /* KakaoSDK */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 86F147CD2F6BA96500E14783 /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */;

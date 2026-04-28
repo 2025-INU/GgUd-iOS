@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CreateAppointmentView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var userSession: UserSessionStore
 
     @State private var title: String = ""
     @State private var selectedDate: Date?
@@ -18,6 +19,10 @@ struct CreateAppointmentView: View {
     @State private var timeDraft = Date()
 
     @State private var navigateToWaitingRoom = false
+    @State private var createdPromiseId: Int64?
+    @State private var isSubmitting = false
+    @State private var alertMessage = ""
+    @State private var showAlert = false
 
     private var isFormValid: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -185,9 +190,9 @@ struct CreateAppointmentView: View {
                         Spacer().frame(height: 48)
 
                         Button {
-                            navigateToWaitingRoom = true
+                            submitPromise()
                         } label: {
-                            Text("약속 생성하기")
+                            Text(isSubmitting ? "생성 중..." : "약속 생성하기")
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
@@ -204,7 +209,7 @@ struct CreateAppointmentView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         }
                         .buttonStyle(.plain)
-                        .disabled(!isFormValid)
+                        .disabled(!isFormValid || isSubmitting)
 
                         Spacer().frame(height: 12)
 
@@ -218,7 +223,16 @@ struct CreateAppointmentView: View {
                 }
             }
 
-            NavigationLink(destination: DepartureSetupView(), isActive: $navigateToWaitingRoom) {
+            NavigationLink(
+                destination: Group {
+                    if let createdPromiseId {
+                        WaitingRoomView(promiseId: createdPromiseId)
+                    } else {
+                        EmptyView()
+                    }
+                },
+                isActive: $navigateToWaitingRoom
+            ) {
                 EmptyView()
             }
             .hidden()
@@ -263,12 +277,143 @@ struct CreateAppointmentView: View {
                     .environment(\.locale, Locale(identifier: "ko_KR"))
             }
         }
+        .alert("약속 만들기", isPresented: $showAlert) {
+            Button("확인", role: .cancel) {}
+        } message: {
+            Text(alertMessage)
+        }
     }
 
     private func hideAllFocus() {
         isNameFocused = false
         isDateFocused = false
         isTimeFocused = false
+    }
+
+    private func submitPromise() {
+        guard isFormValid else { return }
+        guard let combinedDate = combinedPromiseDate() else {
+            alertMessage = "날짜와 시간을 다시 확인해주세요."
+            showAlert = true
+            return
+        }
+        guard combinedDate > Date() else {
+            alertMessage = "약속 일시는 현재보다 미래로 설정해주세요."
+            showAlert = true
+            return
+        }
+        guard let promiseDateTime = combinedPromiseDateTimeISO8601() else {
+            alertMessage = "날짜와 시간을 다시 확인해주세요."
+            showAlert = true
+            return
+        }
+
+        isSubmitting = true
+        createPromise(promiseDateTime: promiseDateTime)
+    }
+
+    private func createPromise(promiseDateTime: String) {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            isSubmitting = false
+            alertMessage = "로그인 정보가 없습니다. 다시 로그인해주세요."
+            showAlert = true
+            return
+        }
+
+        PromiseAPIClient.shared.createPromise(
+            accessToken: accessToken,
+            tokenType: userSession.backendTokenType ?? "Bearer",
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            promiseDateTime: promiseDateTime
+        ) { result in
+            DispatchQueue.main.async {
+                isSubmitting = false
+
+                switch result {
+                case let .success(promise):
+                    createdPromiseId = promise.id
+                    navigateToWaitingRoom = true
+                case let .failure(error):
+                    if shouldRetryWithRefresh(error: error) {
+                        refreshAndRetryCreatePromise(promiseDateTime: promiseDateTime)
+                    } else {
+                        alertMessage = "약속 생성에 실패했습니다.\n\(error.localizedDescription)"
+                        showAlert = true
+                    }
+                }
+            }
+        }
+    }
+
+    private func shouldRetryWithRefresh(error: Error) -> Bool {
+        guard case let AuthAPIError.server(statusCode, _) = error else { return false }
+        return statusCode == 401 || statusCode == 403
+    }
+
+    private func refreshAndRetryCreatePromise(promiseDateTime: String) {
+        guard let refreshToken = userSession.backendRefreshToken, !refreshToken.isEmpty else {
+            isSubmitting = false
+            alertMessage = "로그인 세션이 만료되었습니다. 다시 로그인해주세요."
+            showAlert = true
+            return
+        }
+
+        AuthAPIClient.shared.refreshToken(refreshToken: refreshToken) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case let .success(response):
+                    guard let newAccessToken = response.accessToken, !newAccessToken.isEmpty else {
+                        isSubmitting = false
+                        alertMessage = "새 로그인 토큰을 가져오지 못했습니다. 다시 로그인해주세요."
+                        showAlert = true
+                        return
+                    }
+
+                    userSession.updateBackendTokens(
+                        accessToken: newAccessToken,
+                        tokenType: response.tokenType ?? userSession.backendTokenType ?? "Bearer",
+                        expiresIn: response.expiresIn
+                    )
+
+                    createPromise(promiseDateTime: promiseDateTime)
+
+                case let .failure(error):
+                    isSubmitting = false
+                    alertMessage = "로그인 세션이 만료되었습니다.\n\(error.localizedDescription)"
+                    showAlert = true
+                }
+            }
+        }
+    }
+
+    private func combinedPromiseDate() -> Date? {
+        guard let selectedDate, let selectedTime else { return nil }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul") ?? .current
+        let dateComponents = calendar.dateComponents([.year, .month, .day], from: selectedDate)
+        let timeComponents = calendar.dateComponents([.hour, .minute], from: selectedTime)
+
+        var combined = DateComponents()
+        combined.year = dateComponents.year
+        combined.month = dateComponents.month
+        combined.day = dateComponents.day
+        combined.hour = timeComponents.hour
+        combined.minute = timeComponents.minute
+        combined.second = 0
+
+        return calendar.date(from: combined)
+    }
+
+    private func combinedPromiseDateTimeISO8601() -> String? {
+        guard let date = combinedPromiseDate() else { return nil }
+
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul") ?? .current
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter.string(from: date)
     }
 }
 

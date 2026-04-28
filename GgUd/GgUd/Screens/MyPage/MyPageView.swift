@@ -4,9 +4,10 @@
 //
 
 import SwiftUI
+import KakaoSDKUser
 
 struct MyPageView: View {
-    private let userName = "이은우"
+    @EnvironmentObject private var userSession: UserSessionStore
 
     var body: some View {
         ZStack {
@@ -56,11 +57,26 @@ struct MyPageView: View {
     private var profileRow: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 64))
-                    .foregroundStyle(Color(hex: "#D1D5DB"))
+                if let profileImageURL = userSession.profileImageURL,
+                   let url = URL(string: profileImageURL) {
+                    AsyncImage(url: url) { image in
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    } placeholder: {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 64))
+                            .foregroundStyle(Color(hex: "#D1D5DB"))
+                    }
+                    .frame(width: 64, height: 64)
+                    .clipShape(Circle())
+                } else {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: 64))
+                        .foregroundStyle(Color(hex: "#D1D5DB"))
+                }
 
-                Text(userName)
+                Text(displayName)
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(Color(hex: "#111827"))
 
@@ -87,7 +103,7 @@ struct MyPageView: View {
             }
             divider
             buttonRow(systemImage: "rectangle.portrait.and.arrow.right", title: "로그아웃") {
-                // TODO: logout
+                performLogout()
             }
         }
         .background(Color.white)
@@ -160,10 +176,51 @@ struct MyPageView: View {
         .frame(height: 60)
         .contentShape(Rectangle())
     }
+
+    private var displayName: String {
+        let trimmed = userSession.nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "이은우" : trimmed
+    }
+
+    private func performLogout() {
+        let finishLogout = {
+            UserApi.shared.logout { error in
+                if let error {
+                    print("[KakaoLogin] logout error:", error.localizedDescription)
+                    print("[KakaoLogin] logout full error:", error)
+                } else {
+                    print("[KakaoLogin] logout success")
+                }
+
+                DispatchQueue.main.async {
+                    userSession.logout()
+                }
+            }
+        }
+
+        if let accessToken = userSession.backendAccessToken, !accessToken.isEmpty {
+            AuthAPIClient.shared.logout(
+                accessToken: accessToken,
+                tokenType: userSession.backendTokenType ?? "Bearer"
+            ) { result in
+                switch result {
+                case .success:
+                    print("[KakaoLogin] backend logout success")
+                case let .failure(error):
+                    print("[KakaoLogin] backend logout error:", error.localizedDescription)
+                }
+
+                finishLogout()
+            }
+        } else {
+            finishLogout()
+        }
+    }
 }
 
 #Preview {
     NavigationStack {
         MyPageView()
     }
+    .environmentObject(UserSessionStore())
 }

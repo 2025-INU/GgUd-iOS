@@ -7,12 +7,14 @@
 import KakaoSDKCommon
 import KakaoSDKAuth
 import KakaoSDKUser
+import KakaoSDKTalk
 
 
 import SwiftUI
 
 struct LoginView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var userSession: UserSessionStore
 
     @State private var isLoggingIn = false
     @State private var alertMessage = ""
@@ -152,40 +154,168 @@ struct LoginView: View {
                 return
             }
 
-            isLoggingIn = false
-            alertMessage = "로그인에 실패했습니다.\n\(error.localizedDescription)"
-            showAlert = true
+            DispatchQueue.main.async {
+                isLoggingIn = false
+                alertMessage = "로그인에 실패했습니다.\n\(error.localizedDescription)"
+                showAlert = true
+            }
             return
         }
 
         guard token != nil else {
             print("[KakaoLogin] token is nil")
-            isLoggingIn = false
-            alertMessage = "토큰을 받지 못했습니다."
-            showAlert = true
+            DispatchQueue.main.async {
+                isLoggingIn = false
+                alertMessage = "토큰을 받지 못했습니다."
+                showAlert = true
+            }
             return
         }
 
         print("[KakaoLogin] token received")
 
         UserApi.shared.me { user, error in
-            isLoggingIn = false
-
             if let error {
                 print("[KakaoLogin] me() error:", error.localizedDescription)
                 print("[KakaoLogin] me() full error:", error)
-                alertMessage = "사용자 정보를 가져오지 못했습니다.\n\(error.localizedDescription)"
-                showAlert = true
+                DispatchQueue.main.async {
+                    isLoggingIn = false
+                    alertMessage = "사용자 정보를 가져오지 못했습니다.\n\(error.localizedDescription)"
+                    showAlert = true
+                }
                 return
             }
 
-            let nickname = user?.kakaoAccount?.profile?.nickname ?? "사용자"
-            print("[KakaoLogin] me() success")
-            print("[KakaoLogin] user id:", user?.id ?? 0)
-            print("[KakaoLogin] nickname:", nickname)
-            alertMessage = "\(nickname) 로그인 성공"
-            showAlert = true
-            dismiss()
+            
+            let accountNickname = user?.kakaoAccount?.profile?.nickname?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let accountProfileImageURL = user?.kakaoAccount?.profile?.profileImageUrl?.absoluteString
+
+            if let accountNickname, !accountNickname.isEmpty {
+                print("[KakaoLogin] using Kakao Account nickname:", accountNickname)
+                completeBackendLogin(
+                    kakaoToken: token,
+                    kakaoUserId: user?.id,
+                    nickname: accountNickname,
+                    profileImageURL: accountProfileImageURL
+                )
+                return
+            }
+
+            print("[KakaoLogin] account nickname is empty, trying Talk profile fallback")
+
+            TalkApi.shared.profile { talkProfile, talkError in
+                if let talkError {
+                    print("[KakaoLogin] talk profile error:", talkError.localizedDescription)
+                    print("[KakaoLogin] talk profile full error:", talkError)
+                } else {
+                    print("[KakaoLogin] talk profile nickname:", talkProfile?.nickname as Any)
+                }
+
+                let talkNickname = talkProfile?.nickname?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let talkProfileImageURL = talkProfile?.profileImageUrl?.absoluteString
+                let resolvedNickname = {
+                    if let talkNickname, !talkNickname.isEmpty { return talkNickname }
+                    return "사용자"
+                }()
+                let resolvedProfileImageURL = talkProfileImageURL ?? accountProfileImageURL
+
+                completeBackendLogin(
+                    kakaoToken: token,
+                    kakaoUserId: user?.id,
+                    nickname: resolvedNickname,
+                    profileImageURL: resolvedProfileImageURL
+                )
+            }
+        }
+    }
+
+    private func completeBackendLogin(
+        kakaoToken: OAuthToken?,
+        kakaoUserId: Int64?,
+        nickname: String,
+        profileImageURL: String?
+    ) {
+        guard let kakaoAccessToken = kakaoToken?.accessToken, !kakaoAccessToken.isEmpty else {
+            DispatchQueue.main.async {
+                isLoggingIn = false
+                alertMessage = "카카오 액세스 토큰을 가져오지 못했습니다."
+                showAlert = true
+            }
+            return
+        }
+
+        print("[KakaoLogin] trying backend kakao login")
+
+        AuthAPIClient.shared.loginWithKakao(accessToken: kakaoAccessToken) { result in
+            switch result {
+            case let .success(response):
+                let backendNickname = response.nickname?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let resolvedNickname = {
+                    if let backendNickname, !backendNickname.isEmpty { return backendNickname }
+                    return nickname
+                }()
+
+                print("[KakaoLogin] backend login success")
+                print("[KakaoLogin] backend user id:", response.userId as Any)
+                print("[KakaoLogin] backend nickname:", response.nickname as Any)
+
+                DispatchQueue.main.async {
+                    userSession.update(
+                        kakaoUserId: response.userId ?? kakaoUserId,
+                        nickname: resolvedNickname,
+                        profileImageURL: profileImageURL,
+                        backendAccessToken: response.accessToken,
+                        backendRefreshToken: response.refreshToken,
+                        backendTokenType: response.tokenType,
+                        backendExpiresIn: response.expiresIn
+                    )
+                }
+
+                if let backendAccessToken = response.accessToken, !backendAccessToken.isEmpty {
+                    AuthAPIClient.shared.getMyInfo(
+                        accessToken: backendAccessToken,
+                        tokenType: response.tokenType ?? "Bearer"
+                    ) { result in
+                        switch result {
+                        case let .success(myInfo):
+                            print("[KakaoLogin] getMyInfo success")
+                            print("[KakaoLogin] myInfo nickname:", myInfo.nickname as Any)
+                            DispatchQueue.main.async {
+                                userSession.updateProfile(
+                                    userId: myInfo.id,
+                                    nickname: myInfo.nickname,
+                                    profileImageURL: myInfo.profileImageUrl
+                                )
+                                isLoggingIn = false
+                                dismiss()
+                            }
+
+                        case let .failure(error):
+                            print("[KakaoLogin] getMyInfo error:", error.localizedDescription)
+                            DispatchQueue.main.async {
+                                isLoggingIn = false
+                                dismiss()
+                            }
+                        }
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        isLoggingIn = false
+                        dismiss()
+                    }
+                }
+
+            case let .failure(error):
+                print("[KakaoLogin] backend login error:", error.localizedDescription)
+                DispatchQueue.main.async {
+                    isLoggingIn = false
+                    alertMessage = "서버 로그인에 실패했습니다.\n\(error.localizedDescription)"
+                    showAlert = true
+                }
+            }
         }
     }
 }
@@ -233,6 +363,7 @@ private struct FeatureCard: View {
 
 #Preview {
     LoginView()
+        .environmentObject(UserSessionStore())
 }
 
 private struct LoginMapPinIcon: View {

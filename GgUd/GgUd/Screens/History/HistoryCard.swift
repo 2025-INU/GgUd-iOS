@@ -32,7 +32,6 @@ struct HistoryItem: Identifiable {
     let dateText: String
     let timeText: String
     let memberCount: Int
-    let extraCount: Int
     let location: String
     let status: HistoryStatus
 }
