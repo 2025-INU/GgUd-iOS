@@ -6,6 +6,9 @@
 //
 
 import SwiftUI
+import UIKit
+import KakaoSDKShare
+import KakaoSDKTemplate
 
 struct WaitingRoomView: View {
     @Environment(\.dismiss) private var dismiss
@@ -18,6 +21,10 @@ struct WaitingRoomView: View {
     @State private var summary: PromiseSummaryResponse?
     @State private var isLoading = false
     @State private var loadError: String?
+    @State private var isFetchingInviteCode = false
+    @State private var cachedInviteCode: String?
+    @State private var sharePayload: SharePayload?
+    @State private var inviteAlertMessage: String?
 
     
     var body: some View {
@@ -46,9 +53,32 @@ struct WaitingRoomView: View {
                             .font(.system(size: 18, weight: .bold))
                             .foregroundStyle(AppColors.text)
 
-                        KakaoShareButton {
-                            print("카카오 공유 탭")
+                        KakaoShareButton(title: isFetchingInviteCode ? "초대 코드 불러오는 중..." : "카카오톡으로 링크 공유") {
+                            Task {
+                                await fetchInviteCodeAndShare()
+                            }
                         }
+                        .disabled(isFetchingInviteCode)
+
+                        Button {
+                            Task {
+                                await fetchInviteCodeAndCopy()
+                            }
+                        } label: {
+                            Text(isFetchingInviteCode ? "초대 코드 불러오는 중..." : "초대 코드 복사")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(AppColors.primary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(Color.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(AppColors.border, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isFetchingInviteCode)
 
                         Text("링크를 통해 친구들이 약속에 참여할 수 있어요")
                             .font(.system(size: 13))
@@ -88,8 +118,10 @@ struct WaitingRoomView: View {
                             }
                         }
 
-                        completionCTA
-                            .padding(.top, 8)
+                        if allMembersDone && !members.isEmpty {
+                            completionCTA
+                                .padding(.top, 8)
+                        }
 
                         NavigationLink(
                             destination: MidpointView(promiseId: promiseId),
@@ -114,6 +146,17 @@ struct WaitingRoomView: View {
         }
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
+        .sheet(item: $sharePayload) { payload in
+            ShareSheet(activityItems: [payload.message])
+        }
+        .alert("초대 코드", isPresented: Binding(
+            get: { inviteAlertMessage != nil },
+            set: { if !$0 { inviteAlertMessage = nil } }
+        )) {
+            Button("확인", role: .cancel) { inviteAlertMessage = nil }
+        } message: {
+            Text(sanitizedInviteAlertMessage(inviteAlertMessage))
+        }
     }
     
     private var allMembersDone: Bool {
@@ -122,14 +165,14 @@ struct WaitingRoomView: View {
 
     private var formattedSummaryDate: String {
         guard let dateString = summary?.promiseDateTime,
-              let date = ISO8601DateFormatter.withFractional.date(from: dateString) ?? ISO8601DateFormatter().date(from: dateString)
+              let date = WaitingRoomDateFormatter.parse(dateString)
         else { return "-" }
         return WaitingRoomDateFormatter.date.string(from: date)
     }
 
     private var formattedSummaryTime: String {
         guard let dateString = summary?.promiseDateTime,
-              let date = ISO8601DateFormatter.withFractional.date(from: dateString) ?? ISO8601DateFormatter().date(from: dateString)
+              let date = WaitingRoomDateFormatter.parse(dateString)
         else { return "--:--" }
         return WaitingRoomDateFormatter.time.string(from: date)
     }
@@ -225,6 +268,134 @@ struct WaitingRoomView: View {
         isLoading = false
     }
 
+    @MainActor
+    private func fetchInviteCodeAndShare() async {
+        guard !isFetchingInviteCode else { return }
+
+        switch await fetchInviteCode() {
+        case let .success(inviteCode):
+            cachedInviteCode = inviteCode
+            shareInviteCode(inviteCode)
+        case let .failure(error):
+            presentInviteAlert(friendlyInviteErrorMessage(error))
+        }
+    }
+
+    @MainActor
+    private func fetchInviteCodeAndCopy() async {
+        guard !isFetchingInviteCode else { return }
+
+        switch await fetchInviteCode() {
+        case let .success(inviteCode):
+            cachedInviteCode = inviteCode
+            UIPasteboard.general.string = inviteCode
+            presentInviteAlert("초대 코드가 복사되었어요.\n\(inviteCode)")
+        case let .failure(error):
+            presentInviteAlert(friendlyInviteErrorMessage(error))
+        }
+    }
+
+    @MainActor
+    private func fetchInviteCode() async -> Result<String, Error> {
+        if let cachedInviteCode, !cachedInviteCode.isEmpty {
+            return .success(cachedInviteCode)
+        }
+
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            return .failure(AuthAPIError.server(statusCode: 401, message: "로그인 정보가 없습니다. 다시 로그인해주세요."))
+        }
+
+        isFetchingInviteCode = true
+        defer { isFetchingInviteCode = false }
+
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+
+        return await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getInviteCode(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+    }
+
+    @MainActor
+    private func shareInviteCode(_ inviteCode: String) {
+        let promiseTitle = summary?.title ?? "약속"
+        let message = "[GgUd] \(promiseTitle)에 초대되었어요.\n초대 코드: \(inviteCode)"
+        let appLink = Link(iosExecutionParams: [
+            "inviteCode": inviteCode,
+            "promiseId": String(promiseId)
+        ])
+        let template = TextTemplate(
+            text: message,
+            link: appLink,
+            buttonTitle: "GgUd에서 열기"
+        )
+
+        if ShareApi.isKakaoTalkSharingAvailable() {
+            ShareApi.shared.shareDefault(templatable: template) { sharingResult, error in
+                DispatchQueue.main.async {
+                    if let error {
+                        self.presentInviteAlert(self.friendlyInviteErrorMessage(error))
+                        return
+                    }
+
+                    guard let sharingResult else {
+                        self.presentInviteAlert("카카오톡 공유를 시작하지 못했어요. 잠시 후 다시 시도해주세요.")
+                        return
+                    }
+
+                    UIApplication.shared.open(sharingResult.url, options: [:], completionHandler: nil)
+                }
+            }
+        } else {
+            sharePayload = SharePayload(message: message)
+        }
+    }
+
+    private func friendlyInviteErrorMessage(_ error: Error) -> String {
+        if let apiError = error as? AuthAPIError {
+            switch apiError {
+            case let .server(statusCode, message):
+                print("[InviteCode] server error (\(statusCode)): \(message)")
+
+                switch statusCode {
+                case 401, 403:
+                    return "로그인 정보가 만료되었어요. 다시 로그인해주세요."
+                case 404:
+                    return "약속 정보를 찾지 못했어요."
+                case 500...599:
+                    return "초대 코드를 불러오지 못했어요. 서버에 잠시 문제가 있어요. 조금 뒤에 다시 시도해주세요."
+                default:
+                    return "초대 코드를 불러오지 못했어요. 잠시 후 다시 시도해주세요."
+                }
+            default:
+                print("[InviteCode] api error: \(apiError)")
+                return "초대 코드를 불러오지 못했어요. 잠시 후 다시 시도해주세요."
+            }
+        }
+
+        print("[InviteCode] unexpected error: \(error)")
+        return "초대 코드를 불러오지 못했어요. 잠시 후 다시 시도해주세요."
+    }
+
+    private func presentInviteAlert(_ message: String) {
+        inviteAlertMessage = sanitizedInviteAlertMessage(message)
+    }
+
+    private func sanitizedInviteAlertMessage(_ message: String?) -> String {
+        guard let message, !message.isEmpty else { return "" }
+
+        if message.contains("\"success\":false") || message.contains("Internal server error") {
+            return "초대 코드를 불러오지 못했어요. 서버에 잠시 문제가 있어요. 조금 뒤에 다시 시도해주세요."
+        }
+
+        return message
+    }
+
 }
 
 private enum WaitingRoomDateFormatter {
@@ -243,6 +414,20 @@ private enum WaitingRoomDateFormatter {
         formatter.dateFormat = "HH:mm"
         return formatter
     }()
+
+    static let localDateTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter
+    }()
+
+    static func parse(_ string: String) -> Date? {
+        ISO8601DateFormatter.withFractional.date(from: string)
+        ?? ISO8601DateFormatter().date(from: string)
+        ?? localDateTime.date(from: string)
+    }
 }
 
 private extension ISO8601DateFormatter {
@@ -251,4 +436,20 @@ private extension ISO8601DateFormatter {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
+}
+
+
+private struct SharePayload: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
+private struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

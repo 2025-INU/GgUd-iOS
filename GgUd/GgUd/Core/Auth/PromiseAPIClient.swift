@@ -298,6 +298,99 @@ final class PromiseAPIClient {
         .resume()
     }
 
+
+    func getInviteCode(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/invite/code") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            let responseData = data ?? Data()
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            do {
+                let decoded = try JSONDecoder().decode(BackendPromise.self, from: responseData)
+                if let inviteCode = decoded.inviteCode, !inviteCode.isEmpty {
+                    completion(.success(inviteCode))
+                } else {
+                    completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: "초대 코드를 찾지 못했습니다.")))
+                }
+            } catch {
+                completion(.failure(error))
+            }
+        }
+        .resume()
+    }
+
+    func joinPromise(
+        inviteCode: String,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        completion: @escaping (Result<BackendPromise, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/join/\(inviteCode)") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            let responseData = data ?? Data()
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            do {
+                let decoded = try JSONDecoder().decode(BackendPromise.self, from: responseData)
+                completion(.success(decoded))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+        .resume()
+    }
+
     func getMidpointRecommendations(
         promiseId: Int64,
         accessToken: String,

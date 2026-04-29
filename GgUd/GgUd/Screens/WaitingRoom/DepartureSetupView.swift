@@ -14,8 +14,7 @@ struct DepartureSetupView: View {
 
     let promiseId: Int64
 
-    @State private var selectedTransport: TransportOption? = nil
-    @State private var selectedLocation: String? = nil
+        @State private var selectedLocation: String? = nil
     @State private var addressText: String = ""
     @StateObject private var locationManager = LocationManager()
     @State private var showLocationAlert: Bool = false
@@ -23,15 +22,6 @@ struct DepartureSetupView: View {
     @State private var navigateToWaitingRoom: Bool = false
     @State private var isSubmitting = false
     @State private var summary: PromiseSummaryResponse?
-
-    private let transports: [TransportOption] = [
-        .init(title: "도보", systemImage: "figure.walk", color: Color(red: 0.22, green: 0.80, blue: 0.44)),
-        .init(title: "버스", systemImage: "bus", color: Color(red: 0.28, green: 0.55, blue: 0.98)),
-        .init(title: "지하철", systemImage: "tram", color: Color(red: 0.64, green: 0.44, blue: 0.96)),
-        .init(title: "자동차", systemImage: "car", color: Color(red: 0.98, green: 0.36, blue: 0.35)),
-        .init(title: "택시", systemImage: "car.fill", color: Color(red: 0.97, green: 0.78, blue: 0.07)),
-        .init(title: "자전거", systemImage: "bicycle", color: Color(red: 0.99, green: 0.57, blue: 0.20))
-    ]
 
     var body: some View {
         ZStack {
@@ -56,12 +46,6 @@ struct DepartureSetupView: View {
 
                         searchField
 
-                        Text("교통수단")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(AppColors.text)
-                            .padding(.top, 8)
-
-                        transportGrid
 
                         Button(action: submitDeparture) {
                             Text("약속 참여하기")
@@ -181,7 +165,7 @@ struct DepartureSetupView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(AppColors.primary)
 
-                Text("출발 위치와 교통수단을 선택해주세요")
+                Text("출발 위치를 선택해주세요")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AppColors.primary)
 
@@ -198,14 +182,14 @@ struct DepartureSetupView: View {
     }
 
     private var canJoin: Bool {
-        selectedLocation != nil && selectedTransport != nil
+        selectedLocation != nil
     }
 
     @State private var selectedCoordinate: CLLocationCoordinate2D? = nil
 
     private var summaryDateTimeText: String {
         guard let dateString = summary?.promiseDateTime,
-              let date = DepartureDateFormatter.isoWithFractional.date(from: dateString) ?? ISO8601DateFormatter().date(from: dateString)
+              let date = DepartureDateFormatter.parse(dateString)
         else { return "- · --:--" }
         return "\(DepartureDateFormatter.date.string(from: date)) · \(DepartureDateFormatter.time.string(from: date))"
     }
@@ -271,44 +255,6 @@ struct DepartureSetupView: View {
                 .stroke(Color(red: 0.62, green: 0.90, blue: 0.72), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    private var transportGrid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 14) {
-            ForEach(transports) { item in
-                transportCell(item)
-            }
-        }
-    }
-
-    private func transportCell(_ item: TransportOption) -> some View {
-        Button {
-            selectedTransport = item
-        } label: {
-            VStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(item.color)
-                    .frame(width: 56, height: 56)
-                    .overlay(
-                        Image(systemName: item.systemImage)
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundStyle(.white)
-                    )
-
-                Text(item.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AppColors.text)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(Color.white)
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(selectedTransport?.id == item.id ? AppColors.primary : AppColors.border, lineWidth: selectedTransport?.id == item.id ? 2 : 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        }
-        .buttonStyle(.plain)
     }
 
     @MainActor
@@ -449,13 +395,20 @@ private enum DepartureDateFormatter {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
-}
 
-private struct TransportOption: Identifiable, Equatable {
-    let id = UUID()
-    let title: String
-    let systemImage: String
-    let color: Color
+    static let localDateTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter
+    }()
+
+    static func parse(_ string: String) -> Date? {
+        isoWithFractional.date(from: string)
+        ?? ISO8601DateFormatter().date(from: string)
+        ?? localDateTime.date(from: string)
+    }
 }
 
 private final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
