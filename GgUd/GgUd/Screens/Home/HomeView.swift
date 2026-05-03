@@ -15,6 +15,9 @@ struct HomeView: View {
     @State private var showJoinSheet = false
     @State private var inviteCodeInput = ""
     @State private var isJoiningWithCode = false
+    @State private var isLoadingInvitePreview = false
+    @State private var invitePreview: BackendPromise?
+    @State private var invitePreviewError: String?
     @State private var joinAlertMessage: String?
     @State private var joinedPromiseId: Int64?
     @EnvironmentObject private var userSession: UserSessionStore
@@ -89,6 +92,9 @@ struct HomeView: View {
             InviteCodeJoinSheet(
                 inviteCode: $inviteCodeInput,
                 isJoining: isJoiningWithCode,
+                isLoadingPreview: isLoadingInvitePreview,
+                invitePreview: invitePreview,
+                invitePreviewError: invitePreviewError,
                 onPaste: {
                     inviteCodeInput = UIPasteboard.general.string ?? ""
                 },
@@ -98,7 +104,7 @@ struct HomeView: View {
                     }
                 }
             )
-            .presentationDetents([.height(280)])
+            .presentationDetents([.height(420)])
             .presentationDragIndicator(.visible)
         }
         .alert("초대 코드", isPresented: Binding(
@@ -133,6 +139,22 @@ struct HomeView: View {
         }
         .task(id: userSession.backendAccessToken) {
             await loadPromises()
+        }
+        .onChange(of: inviteCodeInput) { _, _ in
+            fetchInvitePreview()
+        }
+        .onChange(of: showJoinSheet) { _, isPresented in
+            if isPresented {
+                fetchInvitePreview()
+            } else {
+                inviteCodeInput = ""
+                invitePreview = nil
+                invitePreviewError = nil
+                isLoadingInvitePreview = false
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .waitingRoomShouldReturnHome)) { _ in
+            joinedPromiseId = nil
         }
         .background {
             NavigationLink(
@@ -202,6 +224,74 @@ struct HomeView: View {
         case let .failure(error):
             presentJoinAlert(friendlyJoinErrorMessage(error))
         }
+    }
+
+    private func fetchInvitePreview() {
+        let trimmed = inviteCodeInput.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard showJoinSheet else { return }
+
+        if trimmed.isEmpty {
+            invitePreview = nil
+            invitePreviewError = nil
+            isLoadingInvitePreview = false
+            return
+        }
+
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            invitePreview = nil
+            invitePreviewError = "로그인 정보가 없습니다. 다시 로그인해주세요."
+            isLoadingInvitePreview = false
+            return
+        }
+
+        isLoadingInvitePreview = true
+        invitePreviewError = nil
+
+        PromiseAPIClient.shared.getInviteInfo(
+            inviteCode: trimmed,
+            accessToken: accessToken,
+            tokenType: userSession.backendTokenType ?? "Bearer"
+        ) { result in
+            DispatchQueue.main.async {
+                guard inviteCodeInput.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
+                isLoadingInvitePreview = false
+
+                switch result {
+                case let .success(promise):
+                    invitePreview = promise
+                    invitePreviewError = nil
+                case let .failure(error):
+                    invitePreview = nil
+                    invitePreviewError = friendlyInvitePreviewErrorMessage(error)
+                }
+            }
+        }
+    }
+
+    private func friendlyInvitePreviewErrorMessage(_ error: Error) -> String {
+        if let apiError = error as? AuthAPIError {
+            switch apiError {
+            case let .server(statusCode, message):
+                print("[InvitePreview] server error (\(statusCode)): \(message)")
+                switch statusCode {
+                case 401, 403:
+                    return "로그인 정보가 만료되었어요. 다시 로그인해주세요."
+                case 404:
+                    return "유효하지 않은 초대 코드예요."
+                case 500...599:
+                    return "초대 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요."
+                default:
+                    return "초대 정보를 확인할 수 없어요. 다시 확인해주세요."
+                }
+            default:
+                print("[InvitePreview] api error: \(apiError)")
+                return "초대 정보를 확인할 수 없어요. 다시 확인해주세요."
+            }
+        }
+
+        print("[InvitePreview] unexpected error: \(error)")
+        return "초대 정보를 확인할 수 없어요. 다시 확인해주세요."
     }
 
     private func presentJoinAlert(_ message: String) {
@@ -386,6 +476,9 @@ private struct HomeSegmentedSwitch: View {
 private struct InviteCodeJoinSheet: View {
     @Binding var inviteCode: String
     let isJoining: Bool
+    let isLoadingPreview: Bool
+    let invitePreview: BackendPromise?
+    let invitePreviewError: String?
     let onPaste: () -> Void
     let onJoin: () -> Void
 
@@ -411,6 +504,62 @@ private struct InviteCodeJoinSheet: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(AppColors.border, lineWidth: 1)
                 )
+
+            Group {
+                if isLoadingPreview {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("초대 정보를 불러오는 중...")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(AppColors.subText)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 88)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AppColors.border, lineWidth: 1)
+                    )
+                } else if let invitePreview {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(invitePreview.title ?? "약속")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(AppColors.text)
+
+                        HStack(spacing: 12) {
+                            Label(formatDate(invitePreview.promiseDateTime), systemImage: "calendar")
+                            Label(formatTime(invitePreview.promiseDateTime), systemImage: "clock")
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AppColors.subText)
+
+                        Text("주최자: \(invitePreview.hostNickname ?? "알 수 없음")")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AppColors.primary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AppColors.border, lineWidth: 1)
+                    )
+                } else if let invitePreviewError, !invitePreviewError.isEmpty {
+                    Text(invitePreviewError)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(AppColors.border, lineWidth: 1)
+                        )
+                }
+            }
 
             HStack(spacing: 12) {
                 Button(action: onPaste) {
@@ -444,8 +593,8 @@ private struct InviteCodeJoinSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .disabled(isJoining)
-                .opacity(isJoining ? 0.6 : 1)
+                .disabled(isJoining || invitePreview == nil)
+                .opacity((isJoining || invitePreview == nil) ? 0.6 : 1)
             }
 
             Spacer(minLength: 0)
@@ -455,4 +604,49 @@ private struct InviteCodeJoinSheet: View {
         .padding(.bottom, 20)
         .background(AppColors.background)
     }
+
+    private func formatDate(_ raw: String?) -> String {
+        guard let raw else { return "-" }
+
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        let fallbackFormatter = ISO8601DateFormatter()
+        fallbackFormatter.formatOptions = [.withInternetDateTime]
+
+        let outputFormatter = DateFormatter()
+        outputFormatter.locale = Locale(identifier: "ko_KR")
+        outputFormatter.dateFormat = "yyyy-MM-dd"
+
+        if let date = isoFormatter.date(from: raw) ?? fallbackFormatter.date(from: raw) {
+            return outputFormatter.string(from: date)
+        }
+
+        return String(raw.prefix(10))
+    }
+
+    private func formatTime(_ raw: String?) -> String {
+        guard let raw else { return "--:--" }
+
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        let fallbackFormatter = ISO8601DateFormatter()
+        fallbackFormatter.formatOptions = [.withInternetDateTime]
+
+        let outputFormatter = DateFormatter()
+        outputFormatter.locale = Locale(identifier: "ko_KR")
+        outputFormatter.dateFormat = "HH:mm"
+
+        if let date = isoFormatter.date(from: raw) ?? fallbackFormatter.date(from: raw) {
+            return outputFormatter.string(from: date)
+        }
+
+        return "--:--"
+    }
+}
+
+
+private extension Notification.Name {
+    static let waitingRoomShouldReturnHome = Notification.Name("waitingRoomShouldReturnHome")
 }

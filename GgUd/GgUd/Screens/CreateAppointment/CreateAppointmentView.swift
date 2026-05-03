@@ -237,6 +237,11 @@ struct CreateAppointmentView: View {
             }
             .hidden()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .waitingRoomShouldReturnHome)) { _ in
+            navigateToWaitingRoom = false
+            createdPromiseId = nil
+            dismiss()
+        }
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
         .sheet(isPresented: $showDateDialog) {
@@ -498,4 +503,9 @@ private struct SelectionSheet<Content: View>: View {
         }
         .presentationDetents([.medium, .large])
     }
+}
+
+
+private extension Notification.Name {
+    static let waitingRoomShouldReturnHome = Notification.Name("waitingRoomShouldReturnHome")
 }

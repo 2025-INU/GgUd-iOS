@@ -19,6 +19,7 @@ struct WaitingRoomView: View {
     @State private var navigateToMidpoint: Bool = false
     @State private var members: [WaitingMember] = []
     @State private var summary: PromiseSummaryResponse?
+    @State private var promiseStatus: String?
     @State private var isLoading = false
     @State private var loadError: String?
     @State private var isFetchingInviteCode = false
@@ -34,14 +35,17 @@ struct WaitingRoomView: View {
             // ✅ 기존 대기실 화면
             VStack(spacing: 0) {
 
-                AppBar(title: "약속 대기방", onBack: { dismiss() })
+                AppBar(title: "약속 대기방", onBack: {
+                    NotificationCenter.default.post(name: .waitingRoomShouldReturnHome, object: nil)
+                    dismiss()
+                })
 
                 ScrollView {
                     WaitingRoomSummaryCard(
                         title: summary?.title ?? "약속 불러오는 중",
                         dateText: formattedSummaryDate,
                         timeText: formattedSummaryTime,
-                        subtitle: "약속이 생성되었습니다!"
+                        subtitle: summarySubtitle
                     )
                     .padding(.horizontal, 20)
                     .padding(.bottom, 6)
@@ -118,7 +122,7 @@ struct WaitingRoomView: View {
                             }
                         }
 
-                        if allMembersDone && !members.isEmpty {
+                        if shouldShowMidpointCTA {
                             completionCTA
                                 .padding(.top, 8)
                         }
@@ -144,6 +148,9 @@ struct WaitingRoomView: View {
         .task(id: promiseId) {
             await loadWaitingRoom()
         }
+        .onAppear {
+            Task { await loadWaitingRoom() }
+        }
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
         .sheet(item: $sharePayload) { payload in
@@ -161,6 +168,40 @@ struct WaitingRoomView: View {
     
     private var allMembersDone: Bool {
         members.allSatisfy { $0.isDone }
+    }
+
+    private var normalizedPromiseStatus: String {
+        (promiseStatus ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+    }
+
+    private var summarySubtitle: String {
+        switch normalizedPromiseStatus {
+        case "SELECTING_MIDPOINT":
+            return "중간지점 선택이 진행 중입니다!"
+        case "MIDPOINT_CONFIRMED":
+            return "중간지점이 확정되었습니다!"
+        case "PLACE_CONFIRMED":
+            return "최종 장소가 확정되었습니다!"
+        case "COMPLETED", "DONE", "FINISHED":
+            return "약속이 완료되었습니다!"
+        case "CANCELED", "CANCELLED":
+            return "약속이 취소되었습니다."
+        default:
+            return "약속이 생성되었습니다!"
+        }
+    }
+
+    private var shouldShowMidpointCTA: Bool {
+        guard !members.isEmpty, allMembersDone else { return false }
+
+        switch normalizedPromiseStatus {
+        case "", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING":
+            return true
+        default:
+            return false
+        }
     }
 
     private var formattedSummaryDate: String {
@@ -242,7 +283,17 @@ struct WaitingRoomView: View {
             }
         }
 
-        let (summaryResultValue, participantsResultValue) = await (summaryResult, participantsResult)
+        async let statusResult: Result<PromiseStatusResponse, Error> = withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getPromiseStatus(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        let (summaryResultValue, participantsResultValue, statusResultValue) = await (summaryResult, participantsResult, statusResult)
 
         switch summaryResultValue {
         case let .success(summary):
@@ -263,6 +314,15 @@ struct WaitingRoomView: View {
             }
         case let .failure(error):
             loadError = error.localizedDescription
+        }
+
+        switch statusResultValue {
+        case let .success(statusResponse):
+            promiseStatus = statusResponse.status
+        case let .failure(error):
+            if loadError == nil {
+                loadError = error.localizedDescription
+            }
         }
 
         isLoading = false
@@ -452,4 +512,9 @@ private struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+
+private extension Notification.Name {
+    static let waitingRoomShouldReturnHome = Notification.Name("waitingRoomShouldReturnHome")
 }

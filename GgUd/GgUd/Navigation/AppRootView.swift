@@ -79,6 +79,12 @@ struct AppRootView: View {
                 didSyncMyInfo = false
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("waitingRoomShouldReturnHome"))) { _ in
+            selected = .home
+            homePath = NavigationPath()
+            historyPath = NavigationPath()
+            mypagePath = NavigationPath()
+        }
     }
 
     private func syncMyInfoOnLaunch() {

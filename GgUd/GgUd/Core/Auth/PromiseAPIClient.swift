@@ -49,6 +49,57 @@ struct PromiseSummaryResponse: Codable {
     let hostNickname: String?
 }
 
+
+struct PromiseStatusResponse: Decodable {
+    let promiseId: Int64?
+    let status: String?
+
+    init(promiseId: Int64?, status: String?) {
+        self.promiseId = promiseId
+        self.status = status
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case promiseId
+        case id
+        case status
+        case promiseStatus
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        promiseId = try container.decodeIfPresent(Int64.self, forKey: .promiseId)
+            ?? container.decodeIfPresent(Int64.self, forKey: .id)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+            ?? container.decodeIfPresent(String.self, forKey: .promiseStatus)
+    }
+}
+
+
+struct MapMarkerResponse: Codable {
+    let latitude: Double?
+    let longitude: Double?
+    let name: String?
+    let type: String?
+}
+
+struct ParticipantMarkerResponse: Codable {
+    let userId: Int64?
+    let nickname: String?
+    let profileImageUrl: String?
+    let latitude: Double?
+    let longitude: Double?
+    let host: Bool?
+}
+
+struct PromiseMapDataResponse: Codable {
+    let promiseId: Int64?
+    let destination: MapMarkerResponse?
+    let participantDepartures: [ParticipantMarkerResponse]?
+    let recommendedMidpoints: [MapMarkerResponse]?
+    let currentLocations: [ParticipantMarkerResponse]?
+}
+
 struct CoordinateResponse: Codable {
     let latitude: Double?
     let longitude: Double?
@@ -78,6 +129,40 @@ struct MidpointRecommendationResponse: Codable {
     let calculatedMidpoint: CoordinateResponse?
     let recommendedStations: [StationRecommendationResponse]?
     let participantCount: Int?
+}
+
+struct ConfirmMidpointRequest: Codable {
+    let stationId: Int64
+}
+
+struct ConfirmFinalPlaceRequest: Codable {
+    let placeId: String?
+    let placeName: String
+    let latitude: Double
+    let longitude: Double
+}
+
+struct PlaceRecommendationRequest: Codable {
+    let query: String?
+    let tab: String?
+}
+
+struct PlaceRecommendationItemResponse: Codable {
+    let category: String?
+    let address: String?
+    let latitude: Double?
+    let longitude: Double?
+    let place_id: String?
+    let place_name: String?
+    let image_url: String?
+    let ai_summary: String?
+    let ai_score: Double?
+    let distance_from_midpoint: Double?
+}
+
+struct PlaceRecommendationResponse: Codable {
+    let recommendations: [PlaceRecommendationItemResponse]?
+    let promise_id: Int64?
 }
 
 struct UpdateDepartureRequest: Codable {
@@ -299,6 +384,149 @@ final class PromiseAPIClient {
     }
 
 
+    func getPromiseDetail(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        completion: @escaping (Result<BackendPromise, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            let responseData = data ?? Data()
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            do {
+                let decoded = try JSONDecoder().decode(BackendPromise.self, from: responseData)
+                completion(.success(decoded))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+        .resume()
+    }
+
+    func getPromiseStatus(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        completion: @escaping (Result<PromiseStatusResponse, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/status") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            let responseData = data ?? Data()
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            do {
+                let rawStatus = try JSONDecoder().decode(String.self, from: responseData)
+                completion(.success(PromiseStatusResponse(promiseId: promiseId, status: rawStatus)))
+            } catch {
+                do {
+                    let decoded = try JSONDecoder().decode(PromiseStatusResponse.self, from: responseData)
+                    completion(.success(decoded))
+                } catch {
+                    do {
+                        let fallback = try JSONDecoder().decode(BackendPromise.self, from: responseData)
+                        completion(.success(PromiseStatusResponse(promiseId: fallback.id ?? promiseId, status: fallback.status)))
+                    } catch {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        }
+        .resume()
+    }
+
+
+    func getInviteInfo(
+        inviteCode: String,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        completion: @escaping (Result<BackendPromise, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/invite/\(inviteCode)") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            let responseData = data ?? Data()
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            do {
+                let decoded = try JSONDecoder().decode(BackendPromise.self, from: responseData)
+                completion(.success(decoded))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+        .resume()
+    }
+
     func getInviteCode(
         promiseId: Int64,
         accessToken: String,
@@ -391,6 +619,50 @@ final class PromiseAPIClient {
         .resume()
     }
 
+    func getMapData(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        completion: @escaping (Result<PromiseMapDataResponse, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/map-data") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            let responseData = data ?? Data()
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            do {
+                let decoded = try JSONDecoder().decode(PromiseMapDataResponse.self, from: responseData)
+                completion(.success(decoded))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+        .resume()
+    }
+
     func getMidpointRecommendations(
         promiseId: Int64,
         accessToken: String,
@@ -472,6 +744,279 @@ final class PromiseAPIClient {
         }
         .resume()
     }
+
+    func getPlaceRecommendations(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        query: String? = nil,
+        tab: String = "ALL",
+        completion: @escaping (Result<PlaceRecommendationResponse, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/place-recommendations") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try JSONEncoder().encode(PlaceRecommendationRequest(query: query, tab: tab))
+        } catch {
+            completion(.failure(error))
+            return
+        }
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            let responseData = data ?? Data()
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            do {
+                let decoded = try JSONDecoder().decode(PlaceRecommendationResponse.self, from: responseData)
+                completion(.success(decoded))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+        .resume()
+    }
+
+    func confirmMidpoint(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        stationId: Int64,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/midpoint/confirm") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try JSONEncoder().encode(ConfirmMidpointRequest(stationId: stationId))
+        } catch {
+            completion(.failure(error))
+            return
+        }
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let responseData = data ?? Data()
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            completion(.success(()))
+        }
+        .resume()
+    }
+
+    func confirmFinalPlace(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        placeId: String? = nil,
+        placeName: String,
+        latitude: Double,
+        longitude: Double,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/midpoint/place-confirm") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        do {
+            request.httpBody = try JSONEncoder().encode(
+                ConfirmFinalPlaceRequest(
+                    placeId: placeId,
+                    placeName: placeName,
+                    latitude: latitude,
+                    longitude: longitude
+                )
+            )
+        } catch {
+            completion(.failure(error))
+            return
+        }
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let responseData = data ?? Data()
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            completion(.success(()))
+        }
+        .resume()
+    }
+
+    func resetMidpoint(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/midpoint/reset") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let responseData = data ?? Data()
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            completion(.success(()))
+        }
+        .resume()
+    }
+
+    func completePromise(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/complete") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let responseData = data ?? Data()
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            completion(.success(()))
+        }
+        .resume()
+    }
+
+    func cancelPromise(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String = "Bearer",
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/cancel") else {
+            completion(.failure(AuthAPIError.invalidURL))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("\(tokenType) \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        session.dataTask(with: request) { data, response, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion(.failure(AuthAPIError.invalidResponse))
+                return
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let responseData = data ?? Data()
+                let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
+                return
+            }
+
+            completion(.success(()))
+        }
+        .resume()
+    }
+
 
     func updateDeparture(
         promiseId: Int64,
