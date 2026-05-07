@@ -151,7 +151,7 @@ struct MidpointView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(AppColors.text)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 12, height: 12)
                 }
                 .buttonStyle(.plain)
 
@@ -195,7 +195,7 @@ struct MidpointView: View {
                                     .shadow(color: Color.black.opacity(0.14), radius: 12, x: 0, y: 8)
 
                                 Text("AI")
-                                    .font(.system(size: 16, weight: .bold))
+                                    .font(.system(size: 22, weight: .bold))
                                     .foregroundStyle(.white)
                             }
                         }
@@ -504,7 +504,7 @@ struct MidpointView: View {
                 .padding(.top, 6)
                 .padding(.bottom, 28)
 
-            HStack {
+            HStack(alignment: .center, spacing: 12) {
                 Text(stage == .midpoint ? "추천 중간지점" : "추천 장소")
                     .font(.system(size: stage == .midpoint ? 18 : 22, weight: .bold))
                     .foregroundStyle(AppColors.text)
@@ -524,8 +524,8 @@ struct MidpointView: View {
                     .opacity((isLoading || isSubmittingSelection) ? 0.5 : 1)
                 }
             }
-            .padding(.leading, 24)
-            .padding(.trailing, 16)
+            .padding(.leading, stage == .finalPlace ? 30 : 24)
+            .padding(.trailing, 24)
             .padding(.bottom, 20)
 
             Group {
@@ -649,83 +649,64 @@ struct MidpointView: View {
         Button(action: {
             Task { await confirmFinalPlaceSelection(item) }
         }) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 12) {
-                    placeThumbnail(for: item)
+            HStack(alignment: .top, spacing: 16) {
+                placeThumbnail(for: item)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(item.title)
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(AppColors.text)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .frame(minHeight: 84, alignment: .leading)
-                .padding(.horizontal, 22)
-                .padding(.vertical, 18)
-                .background(Color(red: 0.976, green: 0.98, blue: 0.984))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(AppColors.border, lineWidth: 1)
-                )
-
-                HStack(alignment: .top, spacing: 12) {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(red: 0.13, green: 0.79, blue: 0.45))
-                        .frame(width: 36, height: 36)
-                        .overlay(
-                            Image(systemName: "mappin.and.ellipse")
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundStyle(.white)
-                        )
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        if !item.summary.isEmpty {
-                            Text(item.summary)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(AppColors.subText)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(item.title)
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(AppColors.text)
                                 .multilineTextAlignment(.leading)
                                 .lineLimit(2)
-                        }
 
-                        HStack(spacing: 12) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "star.fill")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(Color(red: 0.98, green: 0.79, blue: 0.14))
-                                Text(item.scoreText)
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(AppColors.text)
-                            }
-
-                            HStack(spacing: 4) {
-                                Image(systemName: "figure.walk")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(AppColors.primary)
-                                Text(item.walkTimeText)
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(AppColors.primary)
+                            if !item.summary.isEmpty {
+                                Text(item.summary)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(AppColors.subText)
+                                    .multilineTextAlignment(.leading)
+                                    .lineLimit(2)
                             }
                         }
+
+                        Spacer(minLength: 0)
+
+                        RecommendationLocationIcon()
+                            .frame(width: 24, height: 24)
                     }
 
-                    Spacer(minLength: 0)
+                    HStack(alignment: .center, spacing: 12) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Color(red: 0.98, green: 0.79, blue: 0.14))
+                            Text(item.scoreText)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(AppColors.text)
+                        }
 
-                    VStack(alignment: .trailing, spacing: 10) {
-                        Text(item.categoryText)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(AppColors.subText)
+                        HStack(spacing: 4) {
+                            Image(systemName: "figure.walk")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(AppColors.primary)
+                            Text(item.walkTimeText)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(AppColors.primary)
+                        }
 
-                        trailingCircleArrow
+                        Spacer(minLength: 0)
                     }
                 }
-                .padding(.horizontal, 4)
             }
-            .padding(.vertical, 2)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
+            .background(Color(red: 0.976, green: 0.98, blue: 0.984))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color(red: 0.898, green: 0.906, blue: 0.922), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
         .disabled(isSubmittingSelection || item.coordinate == nil)
@@ -733,35 +714,39 @@ struct MidpointView: View {
     }
 
     @ViewBuilder
-    private func placeThumbnail(for item: FinalPlaceItem) -> some View {
+    private func placeThumbnail(for item: FinalPlaceItem) -> AnyView {
         if let imageURL = item.imageURL, let url = URL(string: imageURL) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case let .success(image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                default:
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color(red: 0.95, green: 0.96, blue: 0.98))
-                        .overlay(
-                            Image(systemName: "fork.knife")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(AppColors.primary)
-                        )
+            return AnyView(
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color(red: 0.95, green: 0.96, blue: 0.98))
+                            .overlay(
+                                Image(systemName: "fork.knife")
+                                    .font(.system(size: 22, weight: .bold))
+                                    .foregroundStyle(AppColors.primary)
+                            )
+                    }
                 }
-            }
-            .frame(width: 64, height: 64)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .frame(width: 104, height: 104)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            )
         } else {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(red: 0.95, green: 0.96, blue: 0.98))
-                .frame(width: 64, height: 64)
-                .overlay(
-                    Image(systemName: "fork.knife")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(AppColors.primary)
-                )
+            return AnyView(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(red: 0.95, green: 0.96, blue: 0.98))
+                    .frame(width: 104, height: 104)
+                    .overlay(
+                        Image(systemName: "fork.knife")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(AppColors.primary)
+                    )
+            )
         }
     }
 
@@ -800,6 +785,102 @@ private struct PlaceItem: Identifiable {
     let subtitle: String
     let timeText: String
     let coordinate: CLLocationCoordinate2D?
+}
+
+private struct RecommendationLocationIcon: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let side = min(geometry.size.width, geometry.size.height)
+            let iconSide = side * 0.9
+            let iconOrigin = CGPoint(
+                x: (geometry.size.width - iconSide) / 2,
+                y: (geometry.size.height - iconSide) / 2
+            )
+            let scale = iconSide / 24.0
+
+            ZStack {
+                RoundedRectangle(cornerRadius: side * 0.18, style: .continuous)
+                    .fill(Color(red: 0.13, green: 0.77, blue: 0.37))
+
+                RecommendationLocationPinView()
+                    .frame(width: iconSide, height: iconSide)
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+private struct RecommendationLocationPinView: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let rect = CGRect(origin: .zero, size: geometry.size)
+            let scaleX = rect.width / 24.0
+            let scaleY = rect.height / 24.0
+            let transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
+
+            Path { path in
+        path.move(to: CGPoint(x: 12, y: 16.0199))
+        path.addLine(to: CGPoint(x: 14.47, y: 13.5399))
+        path.addCurve(to: CGPoint(x: 15.39, y: 11.9599), control1: CGPoint(x: 14.9233, y: 13.0933), control2: CGPoint(x: 15.23, y: 12.5666))
+        path.addCurve(to: CGPoint(x: 15.39, y: 10.1799), control1: CGPoint(x: 15.5433, y: 11.3666), control2: CGPoint(x: 15.5433, y: 10.7733))
+        path.addCurve(to: CGPoint(x: 14.475, y: 8.59493), control1: CGPoint(x: 15.23, y: 9.57327), control2: CGPoint(x: 14.925, y: 9.04493))
+        path.addCurve(to: CGPoint(x: 12.89, y: 7.67993), control1: CGPoint(x: 14.025, y: 8.14493), control2: CGPoint(x: 13.4967, y: 7.83993))
+        path.addCurve(to: CGPoint(x: 11.11, y: 7.67993), control1: CGPoint(x: 12.2967, y: 7.5266), control2: CGPoint(x: 11.7033, y: 7.5266))
+        path.addCurve(to: CGPoint(x: 9.525, y: 8.59493), control1: CGPoint(x: 10.5033, y: 7.83993), control2: CGPoint(x: 9.975, y: 8.14493))
+        path.addCurve(to: CGPoint(x: 8.61, y: 10.1799), control1: CGPoint(x: 9.075, y: 9.04493), control2: CGPoint(x: 8.77, y: 9.57327))
+        path.addCurve(to: CGPoint(x: 8.61, y: 11.9599), control1: CGPoint(x: 8.45667, y: 10.7733), control2: CGPoint(x: 8.45667, y: 11.3666))
+        path.addCurve(to: CGPoint(x: 9.53, y: 13.5399), control1: CGPoint(x: 8.77, y: 12.5666), control2: CGPoint(x: 9.07667, y: 13.0933))
+        path.addLine(to: CGPoint(x: 12, y: 16.0199))
+        path.closeSubpath()
+
+        path.move(to: CGPoint(x: 12, y: 17.4299))
+        path.addLine(to: CGPoint(x: 8.82, y: 14.2499))
+        path.addCurve(to: CGPoint(x: 7.65, y: 12.2099), control1: CGPoint(x: 8.24, y: 13.6766), control2: CGPoint(x: 7.85, y: 12.9966))
+        path.addCurve(to: CGPoint(x: 7.65, y: 9.92993), control1: CGPoint(x: 7.45, y: 11.4499), control2: CGPoint(x: 7.45, y: 10.6899))
+        path.addCurve(to: CGPoint(x: 8.815, y: 7.88493), control1: CGPoint(x: 7.85, y: 9.14326), control2: CGPoint(x: 8.23833, y: 8.4616))
+        path.addCurve(to: CGPoint(x: 10.86, y: 6.70993), control1: CGPoint(x: 9.39167, y: 7.30826), control2: CGPoint(x: 10.0733, y: 6.9166))
+        path.addCurve(to: CGPoint(x: 13.14, y: 6.70993), control1: CGPoint(x: 11.62, y: 6.5166), control2: CGPoint(x: 12.38, y: 6.5166))
+        path.addCurve(to: CGPoint(x: 15.185, y: 7.88493), control1: CGPoint(x: 13.9267, y: 6.9166), control2: CGPoint(x: 14.6083, y: 7.30826))
+        path.addCurve(to: CGPoint(x: 16.35, y: 9.92993), control1: CGPoint(x: 15.7617, y: 8.4616), control2: CGPoint(x: 16.15, y: 9.14326))
+        path.addCurve(to: CGPoint(x: 16.35, y: 12.2099), control1: CGPoint(x: 16.55, y: 10.6899), control2: CGPoint(x: 16.55, y: 11.4499))
+        path.addCurve(to: CGPoint(x: 15.18, y: 14.2499), control1: CGPoint(x: 16.15, y: 12.9966), control2: CGPoint(x: 15.76, y: 13.6766))
+        path.addLine(to: CGPoint(x: 12, y: 17.4299))
+        path.closeSubpath()
+
+        path.move(to: CGPoint(x: 12, y: 12.0699))
+        path.addCurve(to: CGPoint(x: 12.865, y: 11.5699), control1: CGPoint(x: 12.18, y: 12.0699), control2: CGPoint(x: 12.3467, y: 12.0249))
+        path.addCurve(to: CGPoint(x: 13, y: 11.0699), control1: CGPoint(x: 12.955, y: 11.4166), control2: CGPoint(x: 13, y: 11.2499))
+        path.addCurve(to: CGPoint(x: 12.865, y: 10.5699), control1: CGPoint(x: 13, y: 10.8899), control2: CGPoint(x: 12.955, y: 10.7233))
+        path.addCurve(to: CGPoint(x: 12.5, y: 10.2049), control1: CGPoint(x: 12.775, y: 10.4166), control2: CGPoint(x: 12.6533, y: 10.2949))
+        path.addCurve(to: CGPoint(x: 12, y: 10.0699), control1: CGPoint(x: 12.3467, y: 10.1149), control2: CGPoint(x: 12.18, y: 10.0699))
+        path.addCurve(to: CGPoint(x: 11.5, y: 10.2049), control1: CGPoint(x: 11.82, y: 10.0699), control2: CGPoint(x: 11.6533, y: 10.1149))
+        path.addCurve(to: CGPoint(x: 11.135, y: 10.5699), control1: CGPoint(x: 11.3467, y: 10.2949), control2: CGPoint(x: 11.225, y: 10.4166))
+        path.addCurve(to: CGPoint(x: 11, y: 11.0699), control1: CGPoint(x: 11.045, y: 10.7233), control2: CGPoint(x: 11, y: 10.8899))
+        path.addCurve(to: CGPoint(x: 11.135, y: 11.5699), control1: CGPoint(x: 11, y: 11.2499), control2: CGPoint(x: 11.045, y: 11.4166))
+        path.addCurve(to: CGPoint(x: 11.5, y: 11.9349), control1: CGPoint(x: 11.225, y: 11.7233), control2: CGPoint(x: 11.3467, y: 11.8449))
+        path.addCurve(to: CGPoint(x: 12, y: 12.0699), control1: CGPoint(x: 11.6533, y: 12.0249), control2: CGPoint(x: 11.82, y: 12.0699))
+        path.closeSubpath()
+
+        path.move(to: CGPoint(x: 12, y: 13.0699))
+        path.addCurve(to: CGPoint(x: 10.27, y: 12.0699), control1: CGPoint(x: 11.64, y: 13.0699), control2: CGPoint(x: 11.3067, y: 12.9799))
+        path.addCurve(to: CGPoint(x: 10, y: 11.0649), control1: CGPoint(x: 10.09, y: 11.7633), control2: CGPoint(x: 10, y: 11.4283))
+        path.addCurve(to: CGPoint(x: 10.27, y: 10.0649), control1: CGPoint(x: 10, y: 10.7016), control2: CGPoint(x: 10.09, y: 10.3683))
+        path.addCurve(to: CGPoint(x: 11, y: 9.33993), control1: CGPoint(x: 10.45, y: 9.7616), control2: CGPoint(x: 10.6933, y: 9.51993))
+        path.addCurve(to: CGPoint(x: 12, y: 9.06993), control1: CGPoint(x: 11.3067, y: 9.15993), control2: CGPoint(x: 11.64, y: 9.06993))
+        path.addCurve(to: CGPoint(x: 13, y: 9.33993), control1: CGPoint(x: 12.36, y: 9.06993), control2: CGPoint(x: 12.6933, y: 9.15993))
+        path.addCurve(to: CGPoint(x: 13.73, y: 10.0649), control1: CGPoint(x: 13.3067, y: 9.51993), control2: CGPoint(x: 13.55, y: 9.7616))
+        path.addCurve(to: CGPoint(x: 14, y: 11.0649), control1: CGPoint(x: 13.91, y: 10.3683), control2: CGPoint(x: 14, y: 10.7016))
+        path.addCurve(to: CGPoint(x: 13.73, y: 12.0699), control1: CGPoint(x: 14, y: 11.4283), control2: CGPoint(x: 13.91, y: 11.7633))
+        path.addCurve(to: CGPoint(x: 13, y: 12.7999), control1: CGPoint(x: 13.55, y: 12.3766), control2: CGPoint(x: 13.3067, y: 12.6199))
+        path.addCurve(to: CGPoint(x: 12, y: 13.0699), control1: CGPoint(x: 12.6933, y: 12.9799), control2: CGPoint(x: 12.36, y: 13.0699))
+        path.closeSubpath()
+
+                path = path.applying(transform)
+            }
+            .fill(Color.white)
+        }
+    }
 }
 
 private struct FinalPlaceItem: Identifiable {
@@ -1052,6 +1133,11 @@ private extension MidpointView {
         isLoading = false
     }
 
+    private func displayScoreText(_ score: Double?) -> String {
+        guard let score, score > 0 else { return "-" }
+        return String(format: "%.1f", score)
+    }
+
     func localizedCategory(_ raw: String?) -> String {
         guard let raw else { return "추천" }
         let lower = raw.lowercased()
@@ -1191,7 +1277,7 @@ private extension MidpointView {
                     address: place.address ?? "주소 정보 없음",
                     summary: place.ai_summary ?? "추천 장소",
                     imageURL: place.image_url,
-                    scoreText: String(format: "%.1f", place.ai_score ?? 0),
+                    scoreText: displayScoreText(place.ai_score),
                     walkTimeText: distanceText,
                     categoryText: localizedCategory(place.category),
                     coordinate: coordinate

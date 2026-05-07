@@ -286,12 +286,14 @@ private struct SearchIconShape: Shape {
 private extension HistoryItem {
     init(_ promise: BackendPromise) {
         self.init(
+            promiseId: promise.id ?? 0,
             title: promise.title ?? "제목 없음",
             dateText: HistoryDateFormatter.dateText(from: promise.promiseDateTime),
             timeText: HistoryDateFormatter.timeText(from: promise.promiseDateTime),
             memberCount: max(1, Int(promise.participantCount ?? 1)),
             location: promise.confirmedPlaceName ?? "장소 미정",
-            status: .done
+            status: .done,
+            hostId: promise.hostId
         )
     }
 }

@@ -156,6 +156,10 @@ struct HomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .waitingRoomShouldReturnHome)) { _ in
             joinedPromiseId = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("closeWaitingRoomFlow"))) { _ in
+            joinedPromiseId = nil
+            showJoinSheet = false
+        }
         .background {
             NavigationLink(
                 destination: Group {
@@ -375,7 +379,7 @@ struct HomeView: View {
         let status = promise.status ?? ""
         let dateText = formatDate(promise.promiseDateTime)
         let timeText = formatTime(promise.promiseDateTime)
-        let peopleCount = Int(promise.participantCount ?? 0)
+        let peopleCount = max(Int(promise.participantCount ?? 0), 1)
         let place = promise.confirmedPlaceName ?? "장소 미정"
         let segment: HomeSegment = status == "IN_PROGRESS" ? .ongoing : .scheduled
 
@@ -385,7 +389,7 @@ struct HomeView: View {
                 title: promise.title ?? "약속",
                 date: dateText,
                 time: timeText,
-                people: max(peopleCount, 0),
+                people: peopleCount,
                 place: place,
                 statusText: segment == .ongoing ? "진행중" : "예정",
                 confirmedPlace: promise.confirmedPlaceName
@@ -393,44 +397,51 @@ struct HomeView: View {
         )
     }
 
-    private func formatDate(_ raw: String?) -> String {
-        guard let raw else { return "-" }
+    private func parsePromiseDate(_ raw: String?) -> Date? {
+        guard let raw else { return nil }
 
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoFormatter.date(from: raw) { return date }
 
         let fallbackFormatter = ISO8601DateFormatter()
         fallbackFormatter.formatOptions = [.withInternetDateTime]
+        if let date = fallbackFormatter.date(from: raw) { return date }
+
+        let localDateTimeFormatter = DateFormatter()
+        localDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        localDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        localDateTimeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        if let date = localDateTimeFormatter.date(from: raw) { return date }
+
+        let spacedLocalDateTimeFormatter = DateFormatter()
+        spacedLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        spacedLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        spacedLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return spacedLocalDateTimeFormatter.date(from: raw)
+    }
+
+    private func formatDate(_ raw: String?) -> String {
+        guard let raw else { return "-" }
+        guard let date = parsePromiseDate(raw) else {
+            return raw.prefix(10).description
+        }
 
         let outputFormatter = DateFormatter()
         outputFormatter.locale = Locale(identifier: "ko_KR")
+        outputFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
         outputFormatter.dateFormat = "yyyy-MM-dd"
-
-        if let date = isoFormatter.date(from: raw) ?? fallbackFormatter.date(from: raw) {
-            return outputFormatter.string(from: date)
-        }
-
-        return raw.prefix(10).description
+        return outputFormatter.string(from: date)
     }
 
     private func formatTime(_ raw: String?) -> String {
-        guard let raw else { return "--:--" }
-
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        let fallbackFormatter = ISO8601DateFormatter()
-        fallbackFormatter.formatOptions = [.withInternetDateTime]
+        guard let date = parsePromiseDate(raw) else { return "--:--" }
 
         let outputFormatter = DateFormatter()
         outputFormatter.locale = Locale(identifier: "ko_KR")
+        outputFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
         outputFormatter.dateFormat = "HH:mm"
-
-        if let date = isoFormatter.date(from: raw) ?? fallbackFormatter.date(from: raw) {
-            return outputFormatter.string(from: date)
-        }
-
-        return "--:--"
+        return outputFormatter.string(from: date)
     }
 }
 

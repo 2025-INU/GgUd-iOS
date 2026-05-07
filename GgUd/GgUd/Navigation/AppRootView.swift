@@ -43,15 +43,10 @@ struct AppRootView: View {
         }
         .safeAreaInset(edge: .bottom) {
             if userSession.isLoggedIn {
-                CustomTabBar(selected: $selected) { tab in
-                    switch tab {
-                    case .home:
-                        homePath = NavigationPath()
-                    case .history:
-                        historyPath = NavigationPath()
-                    case .mypage:
-                        mypagePath = NavigationPath()
-                    }
+                CustomTabBar(selected: $selected) { _ in
+                    homePath = NavigationPath()
+                    historyPath = NavigationPath()
+                    mypagePath = NavigationPath()
                 }
             }
         }
@@ -210,6 +205,7 @@ private struct CustomTabBar: View {
         let isSelected = selected == tab
 
         return Button {
+            NotificationCenter.default.post(name: Notification.Name("closeWaitingRoomFlow"), object: nil)
             selected = tab
             onSelect(tab)
         } label: {

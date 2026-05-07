@@ -28,12 +28,14 @@ enum HistoryStatus: Equatable {
 
 struct HistoryItem: Identifiable {
     let id = UUID()
+    let promiseId: Int64
     let title: String
     let dateText: String
     let timeText: String
     let memberCount: Int
     let location: String
     let status: HistoryStatus
+    let hostId: Int64?
 }
 
 struct HistoryCard: View {
@@ -55,7 +57,11 @@ struct HistoryCard: View {
 
                     if item.status == .done {
                         NavigationLink {
-                            SettlementView(appointmentTitle: item.title)
+                            SettlementView(
+                                promiseId: item.promiseId,
+                                appointmentTitle: item.title,
+                                hostId: item.hostId
+                            )
                         } label: {
                             Text("정산하기")
                                 .font(.system(size: 14, weight: .bold))

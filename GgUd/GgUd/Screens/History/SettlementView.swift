@@ -8,16 +8,27 @@ import SwiftUI
 
 struct SettlementView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var userSession: UserSessionStore
 
+    let promiseId: Int64
     let appointmentTitle: String
+    let hostId: Int64?
 
-    @State private var amounts: [String] = Array(repeating: "0", count: 4)
+    @State private var settlement: SettlementResponse?
+    @State private var myAmountText = ""
+    @State private var isLoading = false
+    @State private var loadError: String?
+    @State private var isSavingMyExpense = false
+    @State private var isCompletingSettlement = false
+    @State private var actionMessage: String?
+    @State private var isShowingActionAlert = false
 
-    private let members: [SettlementMember] = [
-        .init(name: "김민수", color: Color(red: 0.97, green: 0.36, blue: 0.35)),
-        .init(name: "이지은", color: Color(red: 0.23, green: 0.52, blue: 0.98)),
-        .init(name: "박준호", color: Color(red: 0.21, green: 0.78, blue: 0.43)),
-        .init(name: "최수영", color: Color(red: 0.65, green: 0.44, blue: 0.96))
+    private let palette: [Color] = [
+        Color(red: 0.97, green: 0.36, blue: 0.35),
+        Color(red: 0.23, green: 0.52, blue: 0.98),
+        Color(red: 0.21, green: 0.78, blue: 0.43),
+        Color(red: 0.65, green: 0.44, blue: 0.96),
+        Color(red: 0.95, green: 0.68, blue: 0.08)
     ]
 
     var body: some View {
@@ -27,70 +38,22 @@ struct SettlementView: View {
             VStack(spacing: 0) {
                 AppBar(title: "정산하기", subtitle: appointmentTitle, onBack: { dismiss() })
 
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 24) {
                         summaryCard
 
-                        Text("각자 결제한 금액")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(AppColors.text)
-
-                        VStack(spacing: 16) {
-                            ForEach(Array(members.enumerated()), id: \.offset) { index, member in
-                                SettlementRow(
-                                    member: member,
-                                    amount: $amounts[index],
-                                    roleText: balanceText(for: index),
-                                    roleColor: balanceColor(for: index),
-                                    onFormat: { formatAmountString($0) }
-                                )
-                            }
+                        if isLoading {
+                            loadingSection
+                        } else if let loadError {
+                            errorSection(loadError)
+                        } else if let settlement {
+                            expenseSection(settlement)
+                            balanceSection(settlement)
+                            transferSection(settlement)
+                            actionSection(settlement)
+                        } else {
+                            errorSection("정산 정보를 불러오지 못했어요.")
                         }
-
-                        Text("정산 결과")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(AppColors.text)
-
-                        VStack(spacing: 12) {
-                            ForEach(Array(balances.enumerated()), id: \.offset) { index, entry in
-                                BalanceRow(entry: entry)
-                            }
-                        }
-
-                        Text("상세 정산 내역")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(AppColors.text)
-                            .padding(.top, 6)
-
-                        VStack(spacing: 12) {
-                            ForEach(Array(transfers.enumerated()), id: \.offset) { index, t in
-                                TransferRow(transfer: t)
-                            }
-                        }
-
-                        Button(action: {}) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 16, weight: .bold))
-                                Text("정산 완료하기")
-                                    .font(.system(size: 16, weight: .bold))
-                            }
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 56)
-                            .background(
-                                LinearGradient(
-                                    colors: [Color(red: 0.13, green: 0.77, blue: 0.37),
-                                             Color(red: 0.02, green: 0.59, blue: 0.41)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .shadow(color: Color.black.opacity(0.10), radius: 15, x: 0, y: 10)
-                            .shadow(color: Color.black.opacity(0.10), radius: 6, x: 0, y: 4)
-                        }
-                        .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 16)
@@ -99,6 +62,14 @@ struct SettlementView: View {
             }
         }
         .navigationBarHidden(true)
+        .alert("정산", isPresented: $isShowingActionAlert) {
+            Button("확인", role: .cancel) {}
+        } message: {
+            Text(actionMessage ?? "")
+        }
+        .task(id: promiseId) {
+            await loadSettlement()
+        }
     }
 
     private var summaryCard: some View {
@@ -111,7 +82,7 @@ struct SettlementView: View {
                 .font(.system(size: 34, weight: .bold))
                 .foregroundStyle(AppColors.primary)
 
-            Text("1인당 \(formatAmount(perPerson))원")
+            Text("1인당 \(formatAmount(perPersonAmount))원")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(AppColors.subText)
         }
@@ -120,17 +91,324 @@ struct SettlementView: View {
         .background(Color(red: 0.93, green: 0.97, blue: 1.0))
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
+
+    private var loadingSection: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .progressViewStyle(.circular)
+            Text("정산 정보를 불러오는 중...")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppColors.subText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+    }
+
+    private func errorSection(_ message: String) -> some View {
+        VStack(spacing: 12) {
+            Text(message)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.red)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+
+            Button("다시 불러오기") {
+                Task { await loadSettlement() }
+            }
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(AppColors.primary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+    }
+
+    private func expenseSection(_ settlement: SettlementResponse) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("각자 결제한 금액")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(AppColors.text)
+
+            VStack(spacing: 16) {
+                ForEach(memberEntries) { member in
+                    SettlementRow(
+                        member: member,
+                        amount: bindingAmount(for: member),
+                        roleText: settlementRoleText(for: member),
+                        roleColor: settlementRoleColor(for: member),
+                        isEditable: member.isMine && !(settlement.settlementCompleted ?? false),
+                        isSaving: isSavingMyExpense && member.isMine,
+                        onFormat: { formatAmountString($0) },
+                        onSave: {
+                            Task { await saveMyExpense() }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private func balanceSection(_ settlement: SettlementResponse) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("정산 결과")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(AppColors.text)
+
+            VStack(spacing: 12) {
+                ForEach(memberEntries.filter { ($0.balanceAmount ?? 0) != 0 }) { entry in
+                    BalanceRow(entry: entry)
+                }
+            }
+        }
+    }
+
+    private func transferSection(_ settlement: SettlementResponse) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("상세 정산 내역")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(AppColors.text)
+                .padding(.top, 6)
+
+            if transferItems.isEmpty {
+                Text(settlement.settlementCompleted == true ? "정산이 완료되었어요." : "아직 생성된 이체 내역이 없어요.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppColors.subText)
+                    .padding(.vertical, 8)
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(transferItems) { transfer in
+                        TransferRow(transfer: transfer)
+                    }
+                }
+            }
+        }
+    }
+
+    private func actionSection(_ settlement: SettlementResponse) -> some View {
+        VStack(spacing: 12) {
+            if isCurrentUserHost {
+                Button(action: {
+                    Task { await completeSettlement() }
+                }) {
+                    HStack(spacing: 8) {
+                        if isCompletingSettlement {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: settlement.settlementCompleted == true ? "checkmark.circle.fill" : "checkmark")
+                                .font(.system(size: 16, weight: .bold))
+                        }
+
+                        Text(settlement.settlementCompleted == true ? "정산 완료됨" : "정산 완료하기")
+                            .font(.system(size: 16, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(
+                        LinearGradient(
+                            colors: settlement.settlementCompleted == true
+                                ? [Color(hex: "#9CA3AF"), Color(hex: "#6B7280")]
+                                : [Color(red: 0.13, green: 0.77, blue: 0.37), Color(red: 0.02, green: 0.59, blue: 0.41)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .shadow(color: Color.black.opacity(0.10), radius: 15, x: 0, y: 10)
+                    .shadow(color: Color.black.opacity(0.10), radius: 6, x: 0, y: 4)
+                }
+                .buttonStyle(.plain)
+                .disabled(settlement.settlementCompleted == true || isCompletingSettlement)
+            } else {
+                Text("호스트가 정산을 완료할 수 있어요.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppColors.subText)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 4)
+            }
+        }
+    }
+
+    private var totalAmount: Int {
+        Int((settlement?.totalAmount ?? 0).rounded())
+    }
+
+    private var perPersonAmount: Int {
+        Int((settlement?.perPersonAmount ?? 0).rounded())
+    }
+
+    private var memberEntries: [SettlementMember] {
+        (settlement?.expenses ?? []).enumerated().map { index, expense in
+            SettlementMember(
+                userId: expense.userId,
+                name: expense.nickname ?? "참여자",
+                color: palette[index % palette.count],
+                paidAmount: expense.paidAmount,
+                balanceAmount: expense.balanceAmount,
+                status: expense.status,
+                isMine: expense.userId == userSession.kakaoUserId
+            )
+        }
+    }
+
+    private var transferItems: [TransferItem] {
+        (settlement?.transfers ?? []).map { transfer in
+            let fromColor = colorFor(userId: transfer.fromUserId)
+            let toColor = colorFor(userId: transfer.toUserId)
+            return TransferItem(
+                fromName: transfer.fromNickname ?? "참여자",
+                fromColor: fromColor,
+                toName: transfer.toNickname ?? "참여자",
+                toColor: toColor,
+                amount: Int((transfer.amount ?? 0).rounded())
+            )
+        }
+    }
+
+    private var isCurrentUserHost: Bool {
+        guard let hostId else { return false }
+        return hostId == userSession.kakaoUserId
+    }
+
+    private func colorFor(userId: Int64?) -> Color {
+        guard let userId,
+              let index = memberEntries.firstIndex(where: { $0.userId == userId }) else {
+            return palette[0]
+        }
+        return palette[index % palette.count]
+    }
+
+    private func bindingAmount(for member: SettlementMember) -> Binding<String> {
+        guard member.isMine else {
+            return .constant(formatAmount(Int((member.paidAmount ?? 0).rounded())))
+        }
+
+        return Binding(
+            get: { myAmountText },
+            set: { myAmountText = $0 }
+        )
+    }
+
+    @MainActor
+    private func loadSettlement() async {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            loadError = "로그인이 필요합니다."
+            settlement = nil
+            return
+        }
+
+        isLoading = true
+        loadError = nil
+
+        await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getSettlement(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: userSession.backendTokenType ?? "Bearer"
+            ) { result in
+                DispatchQueue.main.async {
+                    isLoading = false
+                    switch result {
+                    case let .success(response):
+                        settlement = response
+                        loadError = nil
+                        if let myExpense = response.expenses?.first(where: { $0.userId == userSession.kakaoUserId }) {
+                            myAmountText = formatAmount(Int((myExpense.paidAmount ?? 0).rounded()))
+                        }
+                    case let .failure(error):
+                        settlement = nil
+                        loadError = error.localizedDescription
+                    }
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func saveMyExpense() async {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            actionMessage = "로그인이 필요합니다."
+            isShowingActionAlert = true
+            return
+        }
+
+        let numeric = Double(myAmountText.filter(\.isNumber)) ?? 0
+        isSavingMyExpense = true
+
+        await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.updateMyExpense(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: userSession.backendTokenType ?? "Bearer",
+                amount: numeric
+            ) { result in
+                DispatchQueue.main.async {
+                    isSavingMyExpense = false
+                    switch result {
+                    case let .success(response):
+                        settlement = response
+                        actionMessage = "내 결제 금액을 저장했어요."
+                        isShowingActionAlert = true
+                    case let .failure(error):
+                        actionMessage = error.localizedDescription
+                        isShowingActionAlert = true
+                    }
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func completeSettlement() async {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            actionMessage = "로그인이 필요합니다."
+            isShowingActionAlert = true
+            return
+        }
+
+        isCompletingSettlement = true
+
+        await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.completeSettlement(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: userSession.backendTokenType ?? "Bearer"
+            ) { result in
+                DispatchQueue.main.async {
+                    isCompletingSettlement = false
+                    switch result {
+                    case let .success(response):
+                        settlement = response
+                        actionMessage = "정산을 완료했어요."
+                        isShowingActionAlert = true
+                    case let .failure(error):
+                        actionMessage = error.localizedDescription
+                        isShowingActionAlert = true
+                    }
+                    continuation.resume()
+                }
+            }
+        }
+    }
 }
 
 #Preview {
-    SettlementView(appointmentTitle: "친구들과 카페 모임")
+    SettlementView(promiseId: 1, appointmentTitle: "친구들과 카페 모임", hostId: 1)
+        .environmentObject(UserSessionStore())
 }
-
 
 private struct SettlementMember: Identifiable {
     let id = UUID()
+    let userId: Int64?
     let name: String
     let color: Color
+    let paidAmount: Double?
+    let balanceAmount: Double?
+    let status: String?
+    let isMine: Bool
 }
 
 private struct SettlementRow: View {
@@ -138,7 +416,10 @@ private struct SettlementRow: View {
     @Binding var amount: String
     let roleText: String
     let roleColor: Color
+    let isEditable: Bool
+    let isSaving: Bool
     let onFormat: (String) -> String
+    let onSave: () -> Void
 
     var body: some View {
         HStack(spacing: 16) {
@@ -152,7 +433,7 @@ private struct SettlementRow: View {
                 )
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(member.name)
+                Text(member.isMine ? "\(member.name) (나)" : member.name)
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(AppColors.text)
 
@@ -163,29 +444,49 @@ private struct SettlementRow: View {
 
             Spacer()
 
-            HStack(spacing: 8) {
-                TextField("0", text: $amount)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.trailing)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(AppColors.text)
-                    .padding(.horizontal, 12)
-                    .frame(width: 84, height: 40)
-                    .background(Color.white)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(AppColors.border, lineWidth: 1)
-                    )
-                    .onChange(of: amount) { newValue in
-                        let formatted = onFormat(newValue)
-                        if formatted != newValue {
-                            amount = formatted
+            if isEditable {
+                HStack(spacing: 8) {
+                    TextField("0", text: $amount)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(AppColors.text)
+                        .padding(.horizontal, 12)
+                        .frame(width: 96, height: 40)
+                        .background(Color.white)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(AppColors.border, lineWidth: 1)
+                        )
+                        .onChange(of: amount) { _, newValue in
+                            let formatted = onFormat(newValue)
+                            if formatted != newValue {
+                                amount = formatted
+                            }
                         }
-                    }
 
-                Text("원")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(AppColors.subText)
+                    Button(action: onSave) {
+                        Group {
+                            if isSaving {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .tint(.white)
+                            } else {
+                                Text("저장")
+                                    .font(.system(size: 13, weight: .bold))
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .frame(width: 52, height: 40)
+                        .background(AppColors.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else {
+                Text("\(formatAmount(Int((member.paidAmount ?? 0).rounded())))원")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(AppColors.text)
             }
         }
         .padding(16)
@@ -194,20 +495,16 @@ private struct SettlementRow: View {
     }
 }
 
-private struct BalanceEntry {
-    let member: SettlementMember
-    let amount: Int
-}
-
 private struct BalanceRow: View {
-    let entry: BalanceEntry
+    let entry: SettlementMember
 
-    private var isReceiver: Bool { entry.amount > 0 }
+    private var amount: Int { Int((entry.balanceAmount ?? 0).rounded()) }
+    private var isReceiver: Bool { amount > 0 }
 
     var body: some View {
         HStack(spacing: 16) {
             Circle()
-                .fill(entry.member.color)
+                .fill(entry.color)
                 .frame(width: 44, height: 44)
                 .overlay(
                     Image(systemName: "person.fill")
@@ -216,7 +513,7 @@ private struct BalanceRow: View {
                 )
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(entry.member.name)
+                Text(entry.name)
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(AppColors.text)
 
@@ -227,7 +524,7 @@ private struct BalanceRow: View {
 
             Spacer()
 
-            Text(isReceiver ? "+\(formatAmount(entry.amount))원" : "\(formatAmount(abs(entry.amount)))원")
+            Text(isReceiver ? "+\(formatAmount(amount))원" : "\(formatAmount(abs(amount)))원")
                 .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(isReceiver ? Color(red: 0.20, green: 0.45, blue: 0.95) : Color(red: 0.96, green: 0.45, blue: 0.20))
         }
@@ -241,9 +538,12 @@ private struct BalanceRow: View {
     }
 }
 
-private struct TransferItem {
-    let from: SettlementMember
-    let to: SettlementMember
+private struct TransferItem: Identifiable {
+    let id = UUID()
+    let fromName: String
+    let fromColor: Color
+    let toName: String
+    let toColor: Color
     let amount: Int
 }
 
@@ -253,7 +553,7 @@ private struct TransferRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(transfer.from.color)
+                .fill(transfer.fromColor)
                 .frame(width: 36, height: 36)
                 .overlay(
                     Image(systemName: "person.fill")
@@ -262,7 +562,7 @@ private struct TransferRow: View {
                 )
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(transfer.from.name)
+                Text(transfer.fromName)
                     .font(.system(size: 14, weight: .bold))
                 Text("보내는 사람")
                     .font(.system(size: 12, weight: .regular))
@@ -274,7 +574,7 @@ private struct TransferRow: View {
                 .foregroundStyle(AppColors.primary)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(transfer.to.name)
+                Text(transfer.toName)
                     .font(.system(size: 14, weight: .bold))
                 Text("받는 사람")
                     .font(.system(size: 12, weight: .regular))
@@ -311,53 +611,21 @@ private extension SettlementView {
         return SettlementView.numberFormatter.string(from: NSNumber(value: number)) ?? "\(number)"
     }
 
-    var numericAmounts: [Int] {
-        amounts.map { Int($0.filter(\.isNumber)) ?? 0 }
-    }
-
-    var totalAmount: Int {
-        numericAmounts.reduce(0, +)
-    }
-
-    var perPerson: Int {
-        guard !members.isEmpty else { return 0 }
-        return totalAmount / members.count
-    }
-
-    var balances: [BalanceEntry] {
-        zip(members, numericAmounts).map { member, paid in
-            BalanceEntry(member: member, amount: paid - perPerson)
+    func settlementRoleText(for member: SettlementMember) -> String {
+        let value = Int((member.balanceAmount ?? 0).rounded())
+        if member.isMine {
+            return "내 결제 금액"
         }
-    }
-
-    func balanceText(for index: Int) -> String {
-        let value = balances[index].amount
         return value >= 0 ? "받을 사람" : "보낼 사람"
     }
 
-    func balanceColor(for index: Int) -> Color {
-        let value = balances[index].amount
+    func settlementRoleColor(for member: SettlementMember) -> Color {
+        if member.isMine {
+            return AppColors.primary
+        }
+        let value = Int((member.balanceAmount ?? 0).rounded())
         return value >= 0 ? Color(red: 0.20, green: 0.45, blue: 0.95) : Color(red: 0.96, green: 0.45, blue: 0.20)
     }
-
-    var transfers: [TransferItem] {
-        var senders = balances.filter { $0.amount < 0 }.map { (member: $0.member, amount: -$0.amount) }
-        var receivers = balances.filter { $0.amount > 0 }.map { (member: $0.member, amount: $0.amount) }
-        var result: [TransferItem] = []
-
-        var i = 0
-        var j = 0
-        while i < senders.count && j < receivers.count {
-            let send = min(senders[i].amount, receivers[j].amount)
-            result.append(TransferItem(from: senders[i].member, to: receivers[j].member, amount: send))
-            senders[i].amount -= send
-            receivers[j].amount -= send
-            if senders[i].amount == 0 { i += 1 }
-            if receivers[j].amount == 0 { j += 1 }
-        }
-        return result
-    }
-
 }
 
 private func formatAmount(_ value: Int) -> String {

@@ -242,6 +242,11 @@ struct CreateAppointmentView: View {
             createdPromiseId = nil
             dismiss()
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("closeWaitingRoomFlow"))) { _ in
+            navigateToWaitingRoom = false
+            createdPromiseId = nil
+            dismiss()
+        }
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
         .sheet(isPresented: $showDateDialog) {
