@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomePromise: Identifiable {
     let id = UUID()
+    let promiseId: Int64?
     let title: String
     let date: String
     let time: String

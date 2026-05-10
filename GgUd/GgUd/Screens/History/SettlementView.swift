@@ -334,7 +334,12 @@ struct SettlementView: View {
             return
         }
 
-        let numeric = Double(myAmountText.filter(\.isNumber)) ?? 0
+        let numeric = Int(myAmountText.filter(\.isNumber)) ?? 0
+        guard numeric >= 0 else {
+            actionMessage = "정산 금액을 다시 확인해주세요."
+            isShowingActionAlert = true
+            return
+        }
         isSavingMyExpense = true
 
         await withCheckedContinuation { continuation in
@@ -352,12 +357,38 @@ struct SettlementView: View {
                         actionMessage = "내 결제 금액을 저장했어요."
                         isShowingActionAlert = true
                     case let .failure(error):
-                        actionMessage = error.localizedDescription
+                        print("[Settlement] saveMyExpense error:", error.localizedDescription)
+                        actionMessage = friendlySettlementErrorMessage(error)
                         isShowingActionAlert = true
                     }
                     continuation.resume()
                 }
             }
+        }
+    }
+
+    private func friendlySettlementErrorMessage(_ error: Error) -> String {
+        guard let apiError = error as? AuthAPIError else {
+            return error.localizedDescription
+        }
+
+        switch apiError {
+        case let .server(statusCode, message):
+            if statusCode == 500 {
+                return "정산 금액을 저장하지 못했어요. 서버에 잠시 문제가 있어요. 잠시 후 다시 시도해주세요."
+            }
+            if statusCode == 400 {
+                return "지금은 정산 금액을 수정할 수 없어요. 약속 상태를 확인해주세요."
+            }
+            if statusCode == 403 {
+                return "내 결제 금액만 수정할 수 있어요."
+            }
+            if statusCode == 404 {
+                return "약속 정보를 찾지 못했어요."
+            }
+            return "정산 금액을 저장하지 못했어요. (\(statusCode))"
+        default:
+            return error.localizedDescription
         }
     }
 
@@ -385,7 +416,8 @@ struct SettlementView: View {
                         actionMessage = "정산을 완료했어요."
                         isShowingActionAlert = true
                     case let .failure(error):
-                        actionMessage = error.localizedDescription
+                        print("[Settlement] saveMyExpense error:", error.localizedDescription)
+                        actionMessage = friendlySettlementErrorMessage(error)
                         isShowingActionAlert = true
                     }
                     continuation.resume()

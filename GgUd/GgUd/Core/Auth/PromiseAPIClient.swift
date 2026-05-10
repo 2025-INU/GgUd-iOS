@@ -261,7 +261,7 @@ struct SettlementResponse: Codable {
 }
 
 struct UpdateMyExpenseRequest: Codable {
-    let amount: Double
+    let amount: Int
 }
 
 final class PromiseAPIClient {
@@ -311,6 +311,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -418,6 +420,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -462,6 +466,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -507,6 +513,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -551,6 +559,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -606,6 +616,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -650,6 +662,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -698,6 +712,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -742,6 +758,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -798,6 +816,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -842,6 +862,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -886,6 +908,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -978,6 +1002,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -1241,6 +1267,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -1259,7 +1287,7 @@ final class PromiseAPIClient {
         promiseId: Int64,
         accessToken: String,
         tokenType: String = "Bearer",
-        amount: Double,
+        amount: Int,
         completion: @escaping (Result<SettlementResponse, Error>) -> Void
     ) {
         guard let url = URL(string: "\(baseURL)/api/v1/promises/\(promiseId)/expenses/my") else {
@@ -1273,6 +1301,7 @@ final class PromiseAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         do {
+            print("[Settlement] updateMyExpense payload amount:", amount)
             request.httpBody = try JSONEncoder().encode(UpdateMyExpenseRequest(amount: amount))
         } catch {
             completion(.failure(error))
@@ -1294,6 +1323,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -1338,6 +1369,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }
@@ -1395,6 +1428,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
+                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
+                print("[Settlement] updateMyExpense failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }

@@ -76,7 +76,16 @@ struct HomeView: View {
                         } else {
                             VStack(spacing: 16) {
                                 ForEach(currentItems) { item in
-                                    CardContent(item: item, isScheduled: selectedSegment == .scheduled)
+                                    if selectedSegment == .ongoing, let promiseId = item.promiseId {
+                                        NavigationLink {
+                                            MapView(promiseId: promiseId, title: item.title)
+                                        } label: {
+                                            CardContent(item: item, isScheduled: false)
+                                        }
+                                        .buttonStyle(.plain)
+                                    } else {
+                                        CardContent(item: item, isScheduled: selectedSegment == .scheduled)
+                                    }
                                 }
                             }
                             .padding(.top, 24)
@@ -386,6 +395,7 @@ struct HomeView: View {
         return (
             segment,
             HomePromise(
+                promiseId: promise.id,
                 title: promise.title ?? "약속",
                 date: dateText,
                 time: timeText,
