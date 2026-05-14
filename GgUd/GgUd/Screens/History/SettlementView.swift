@@ -353,6 +353,9 @@ struct SettlementView: View {
                     isSavingMyExpense = false
                     switch result {
                     case let .success(response):
+                        print("[Settlement] saveMyExpense success")
+                        print("[Settlement] saved totalAmount:", response.totalAmount as Any)
+                        print("[Settlement] saved perPersonAmount:", response.perPersonAmount as Any)
                         settlement = response
                         actionMessage = "내 결제 금액을 저장했어요."
                         isShowingActionAlert = true
@@ -412,6 +415,8 @@ struct SettlementView: View {
                     isCompletingSettlement = false
                     switch result {
                     case let .success(response):
+                        print("[Settlement] completeSettlement success")
+                        print("[Settlement] settlementCompleted:", response.settlementCompleted as Any)
                         settlement = response
                         actionMessage = "정산을 완료했어요."
                         isShowingActionAlert = true
@@ -433,7 +438,6 @@ struct SettlementView: View {
 }
 
 private struct SettlementMember: Identifiable {
-    let id = UUID()
     let userId: Int64?
     let name: String
     let color: Color
@@ -441,6 +445,13 @@ private struct SettlementMember: Identifiable {
     let balanceAmount: Double?
     let status: String?
     let isMine: Bool
+
+    var id: String {
+        if let userId {
+            return "user-\(userId)"
+        }
+        return "name-\(name)-mine-\(isMine)"
+    }
 }
 
 private struct SettlementRow: View {

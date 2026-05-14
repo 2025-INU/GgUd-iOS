@@ -98,8 +98,12 @@ struct ProfileEditView: View {
 
         isSaving = true
         let tokenType = userSession.backendTokenType ?? "Bearer"
+        print("[ProfileEdit] save tapped")
+        print("[ProfileEdit] nickname:", trimmedName)
+        print("[ProfileEdit] has selected image:", selectedImageData != nil)
 
         uploadProfileImageIfNeeded(accessToken: accessToken, tokenType: tokenType) { uploadedImageURL in
+            print("[ProfileEdit] uploadProfileImageIfNeeded completed. uploadedImageURL:", uploadedImageURL ?? "nil")
             AuthAPIClient.shared.updateMyProfile(
                 accessToken: accessToken,
                 tokenType: tokenType,
@@ -111,6 +115,9 @@ struct ProfileEditView: View {
 
                     switch result {
                     case let .success(user):
+                        print("[ProfileEdit] updateMyProfile success")
+                        print("[ProfileEdit] updated nickname:", user.nickname ?? trimmedName)
+                        print("[ProfileEdit] updated profileImageUrl:", user.profileImageUrl ?? "nil")
                         userSession.updateProfile(
                             userId: user.id,
                             nickname: user.nickname ?? trimmedName,
@@ -118,6 +125,7 @@ struct ProfileEditView: View {
                         )
                         dismiss()
                     case let .failure(error):
+                        print("[ProfileEdit] updateMyProfile error:", error.localizedDescription)
                         alertMessage = error.localizedDescription
                         showAlert = true
                     }
@@ -132,6 +140,7 @@ struct ProfileEditView: View {
         completion: @escaping (String?) -> Void
     ) {
         guard let selectedImageData else {
+            print("[ProfileEdit] no new image selected. skipping upload")
             completion(nil)
             return
         }
@@ -139,6 +148,10 @@ struct ProfileEditView: View {
         let mimeType = imageMimeType(for: selectedImageData)
         let fileExtension = fileExtension(for: mimeType)
         let fileName = "profile.\(fileExtension)"
+
+        print("[ProfileEdit] uploadProfileImage start")
+        print("[ProfileEdit] image mimeType:", mimeType)
+        print("[ProfileEdit] image bytes:", selectedImageData.count)
 
         AuthAPIClient.shared.uploadProfileImage(
             accessToken: accessToken,
@@ -150,8 +163,11 @@ struct ProfileEditView: View {
             DispatchQueue.main.async {
                 switch result {
                 case let .success(user):
+                    print("[ProfileEdit] uploadProfileImage success")
+                    print("[ProfileEdit] uploaded profileImageUrl:", user.profileImageUrl ?? "nil")
                     completion(user.profileImageUrl)
                 case let .failure(error):
+                    print("[ProfileEdit] uploadProfileImage error:", error.localizedDescription)
                     isSaving = false
                     alertMessage = error.localizedDescription
                     showAlert = true

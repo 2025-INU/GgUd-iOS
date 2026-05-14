@@ -62,6 +62,11 @@ struct HistoryView: View {
         .task(id: userSession.backendAccessToken) {
             await loadHistory()
         }
+        .onAppear {
+            Task {
+                await loadHistory()
+            }
+        }
     }
 
     private var historyHeader: some View {

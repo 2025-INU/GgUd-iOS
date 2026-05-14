@@ -20,6 +20,10 @@ struct HomeView: View {
     @State private var invitePreviewError: String?
     @State private var joinAlertMessage: String?
     @State private var joinedPromiseId: Int64?
+    @State private var selectedMapPromise: HomePromise?
+    @State private var promisePendingCompletion: HomePromise?
+    @State private var isCompletingPromiseId: Int64?
+    @State private var completionAlertMessage: String?
     @EnvironmentObject private var userSession: UserSessionStore
 
     var body: some View {
@@ -76,15 +80,26 @@ struct HomeView: View {
                         } else {
                             VStack(spacing: 16) {
                                 ForEach(currentItems) { item in
-                                    if selectedSegment == .ongoing, let promiseId = item.promiseId {
-                                        NavigationLink {
-                                            MapView(promiseId: promiseId, title: item.title)
-                                        } label: {
-                                            CardContent(item: item, isScheduled: false)
+                                    CardContent(
+                                        item: item,
+                                        isScheduled: selectedSegment == .scheduled,
+                                        isCompleting: isCompletingPromiseId == item.promiseId,
+                                        onCompleteTapped: item.canComplete ? {
+                                            promisePendingCompletion = item
+                                        } : nil
+                                    )
+                                    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .onTapGesture {
+                                        guard let promiseId = item.promiseId else { return }
+
+                                        if selectedSegment == .ongoing {
+                                            selectedMapPromise = item
+                                            return
                                         }
-                                        .buttonStyle(.plain)
-                                    } else {
-                                        CardContent(item: item, isScheduled: selectedSegment == .scheduled)
+
+                                        if selectedSegment == .scheduled, item.confirmedPlace == nil {
+                                            joinedPromiseId = promiseId
+                                        }
                                     }
                                 }
                             }
@@ -123,6 +138,27 @@ struct HomeView: View {
             Button("확인", role: .cancel) { joinAlertMessage = nil }
         } message: {
             Text(sanitizedJoinAlertMessage(joinAlertMessage))
+        }
+        .alert("약속 종료", isPresented: Binding(
+            get: { promisePendingCompletion != nil },
+            set: { if !$0 { promisePendingCompletion = nil } }
+        ), presenting: promisePendingCompletion) { item in
+            Button("취소", role: .cancel) { promisePendingCompletion = nil }
+            Button("종료", role: .destructive) {
+                Task {
+                    await completePromise(item)
+                }
+            }
+        } message: { item in
+            Text("\(item.title) 약속을 종료할까요? 종료 후에는 진행중인 약속에서 사라져요.")
+        }
+        .alert("약속 종료", isPresented: Binding(
+            get: { completionAlertMessage != nil },
+            set: { if !$0 { completionAlertMessage = nil } }
+        )) {
+            Button("확인", role: .cancel) { completionAlertMessage = nil }
+        } message: {
+            Text(completionAlertMessage ?? "")
         }
         .overlay(alignment: .bottomTrailing) {
             NavigationLink {
@@ -170,22 +206,41 @@ struct HomeView: View {
             showJoinSheet = false
         }
         .background {
-            NavigationLink(
-                destination: Group {
-                    if let joinedPromiseId {
-                        WaitingRoomView(promiseId: joinedPromiseId)
-                    } else {
-                        EmptyView()
-                    }
-                },
-                isActive: Binding(
-                    get: { joinedPromiseId != nil },
-                    set: { if !$0 { joinedPromiseId = nil } }
-                )
-            ) {
-                EmptyView()
+            ZStack {
+                NavigationLink(
+                    destination: Group {
+                        if let joinedPromiseId {
+                            WaitingRoomView(promiseId: joinedPromiseId)
+                        } else {
+                            EmptyView()
+                        }
+                    },
+                    isActive: Binding(
+                        get: { joinedPromiseId != nil },
+                        set: { if !$0 { joinedPromiseId = nil } }
+                    )
+                ) {
+                    EmptyView()
+                }
+                .hidden()
+
+                NavigationLink(
+                    destination: Group {
+                        if let selectedMapPromise, let promiseId = selectedMapPromise.promiseId {
+                            MapView(promiseId: promiseId, title: selectedMapPromise.title)
+                        } else {
+                            EmptyView()
+                        }
+                    },
+                    isActive: Binding(
+                        get: { selectedMapPromise != nil },
+                        set: { if !$0 { selectedMapPromise = nil } }
+                    )
+                ) {
+                    EmptyView()
+                }
+                .hidden()
             }
-            .hidden()
         }
     }
 
@@ -402,7 +457,8 @@ struct HomeView: View {
                 people: peopleCount,
                 place: place,
                 statusText: segment == .ongoing ? "진행중" : "예정",
-                confirmedPlace: promise.confirmedPlaceName
+                confirmedPlace: promise.confirmedPlaceName,
+                canComplete: segment == .ongoing && promise.hostId == userSession.kakaoUserId
             )
         )
     }
@@ -452,6 +508,71 @@ struct HomeView: View {
         outputFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
         outputFormatter.dateFormat = "HH:mm"
         return outputFormatter.string(from: date)
+    }
+
+    @MainActor
+    private func completePromise(_ item: HomePromise) async {
+        guard let promiseId = item.promiseId else {
+            completionAlertMessage = "약속 정보를 찾지 못했어요."
+            promisePendingCompletion = nil
+            return
+        }
+
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            completionAlertMessage = "로그인 정보가 없어요. 다시 로그인해주세요."
+            promisePendingCompletion = nil
+            return
+        }
+
+        isCompletingPromiseId = promiseId
+        promisePendingCompletion = nil
+        defer { isCompletingPromiseId = nil }
+
+        let result: Result<Void, Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.completePromise(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: userSession.backendTokenType ?? "Bearer"
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch result {
+        case .success:
+            print("[HomeComplete] success for promiseId:", promiseId)
+            completionAlertMessage = "약속을 종료했어요."
+            await loadPromises()
+        case let .failure(error):
+            print("[HomeComplete] failure for promiseId:", promiseId)
+            print("[HomeComplete] error:", error.localizedDescription)
+            completionAlertMessage = friendlyCompletePromiseErrorMessage(error)
+        }
+    }
+
+    private func friendlyCompletePromiseErrorMessage(_ error: Error) -> String {
+        guard let apiError = error as? AuthAPIError else {
+            return "약속을 종료하지 못했어요. 잠시 후 다시 시도해주세요."
+        }
+
+        switch apiError {
+        case let .server(statusCode, message):
+            print("[HomeComplete] server error (\(statusCode)): \(message)")
+            switch statusCode {
+            case 401, 403:
+                return "약속을 종료할 권한이 없거나 로그인 정보가 만료되었어요."
+            case 404:
+                return "약속 정보를 찾지 못했어요."
+            case 409:
+                return "지금 상태에서는 약속을 종료할 수 없어요."
+            case 500...599:
+                return "약속 종료 중 서버에 문제가 생겼어요. 잠시 후 다시 시도해주세요."
+            default:
+                return "약속을 종료하지 못했어요. 잠시 후 다시 시도해주세요."
+            }
+        default:
+            return "약속을 종료하지 못했어요. 잠시 후 다시 시도해주세요."
+        }
     }
 }
 

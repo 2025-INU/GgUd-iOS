@@ -10,11 +10,14 @@ struct HomePromise: Identifiable {
     let place: String
     let statusText: String
     let confirmedPlace: String?
+    let canComplete: Bool
 }
 
 struct CardContent: View {
     let item: HomePromise
     let isScheduled: Bool
+    var isCompleting: Bool = false
+    var onCompleteTapped: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -43,13 +46,29 @@ struct CardContent: View {
 
                 Spacer()
 
-                Text(item.statusText)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(isScheduled ? Color(hex: "#2563EB") : Color(hex: "#16A34A"))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(isScheduled ? Color(hex: "#DBEAFE") : Color(hex: "#DCFCE7"))
-                    .clipShape(Capsule())
+                VStack(alignment: .trailing, spacing: 10) {
+                    Text(item.statusText)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(isScheduled ? Color(hex: "#2563EB") : Color(hex: "#16A34A"))
+                        .frame(width: 68)
+                        .padding(.vertical, 6)
+                        .background(isScheduled ? Color(hex: "#DBEAFE") : Color(hex: "#DCFCE7"))
+                        .clipShape(Capsule())
+
+                    if let onCompleteTapped {
+                        Button(action: onCompleteTapped) {
+                            Text(isCompleting ? "종료 중" : "약속 종료")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Color(hex: "#EF4444"))
+                                .frame(width: 68)
+                                .padding(.vertical, 6)
+                                .background(Color(hex: "#FEE2E2"))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isCompleting)
+                    }
+                }
             }
 
             Spacer().frame(height: 24)

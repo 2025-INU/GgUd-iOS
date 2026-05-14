@@ -135,7 +135,11 @@ struct MidpointView: View {
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
         .task(id: promiseId) {
+            prepareMapLifecycle()
             await loadMidpointData()
+        }
+        .onDisappear {
+            tearDownMapLifecycle()
         }
         .alert("중간지점", isPresented: $isShowingActionAlert) {
             Button("확인", role: .cancel) { }
@@ -249,16 +253,27 @@ struct MidpointView: View {
 #endif
             }
             .clipped()
-            .onAppear {
-                shouldDrawMap = true
-                locationManager.requestCurrentLocation()
-            }
-            .onDisappear {
-                shouldDrawMap = false
-            }
         }
     }
 
+    private func prepareMapLifecycle() {
+        DispatchQueue.main.async {
+            locationManager.requestCurrentLocation()
+        }
+#if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            shouldDrawMap = true
+        }
+#endif
+    }
+
+    private func tearDownMapLifecycle() {
+#if !targetEnvironment(simulator)
+        DispatchQueue.main.async {
+            shouldDrawMap = false
+        }
+#endif
+    }
 
     private var aiRecommendationModal: some View {
         ZStack {
@@ -811,80 +826,96 @@ private struct FinalPlaceItem: Identifiable {
     let coordinate: CLLocationCoordinate2D?
 }
 
-private struct SimulatorMidpointMapView: View {
+private struct SimulatorMidpointMapView: UIViewRepresentable {
     let centerCoordinate: CLLocationCoordinate2D?
     let participants: [MarkerItem]
     let recommendations: [PlaceItem]
 
-    @State private var region: MKCoordinateRegion
-
-    init(centerCoordinate: CLLocationCoordinate2D?, participants: [MarkerItem], recommendations: [PlaceItem]) {
-        self.centerCoordinate = centerCoordinate
-        self.participants = participants
-        self.recommendations = recommendations
-        let fallback = centerCoordinate ?? CLLocationCoordinate2D(latitude: 37.4979, longitude: 127.0276)
-        _region = State(initialValue: MKCoordinateRegion(
-            center: fallback,
-            span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
-        ))
+    func makeUIView(context: Context) -> MKMapView {
+        let mapView = MKMapView(frame: .zero)
+        mapView.delegate = context.coordinator
+        mapView.showsCompass = false
+        mapView.pointOfInterestFilter = .excludingAll
+        return mapView
     }
 
-    private var annotations: [SimulatorMapAnnotationItem] {
-        let participantItems = participants.compactMap { item -> SimulatorMapAnnotationItem? in
-            guard let coordinate = item.coordinate else { return nil }
-            return SimulatorMapAnnotationItem(
-                title: item.title,
-                coordinate: coordinate,
-                color: UIColor(item.color)
-            )
-        }
+    func updateUIView(_ mapView: MKMapView, context: Context) {
+        let annotations = participantAnnotations + recommendationAnnotations
+        let existing = mapView.annotations.compactMap { $0 as? SimulatorAnnotation }
+        mapView.removeAnnotations(existing)
+        mapView.addAnnotations(annotations)
 
-        let recommendationItems = recommendations.compactMap { item -> SimulatorMapAnnotationItem? in
-            guard let coordinate = item.coordinate else { return nil }
-            return SimulatorMapAnnotationItem(
-                title: item.title,
-                coordinate: coordinate,
-                color: UIColor(red: 0.22, green: 0.62, blue: 0.96, alpha: 1)
-            )
-        }
+        let nextCenter = centerCoordinate ?? annotations.first?.coordinate
+        guard let nextCenter else { return }
+        guard nextCenter.latitude.isFinite, nextCenter.longitude.isFinite else { return }
 
-        return participantItems + recommendationItems
+        let span = MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
+        let region = MKCoordinateRegion(center: nextCenter, span: span)
+        mapView.setRegion(region, animated: false)
     }
 
-    var body: some View {
-        Map(coordinateRegion: $region, annotationItems: annotations) { item in
-            MapAnnotation(coordinate: item.coordinate) {
-                Circle()
-                    .fill(Color(item.color))
-                    .frame(width: 20, height: 20)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white, lineWidth: 2)
-                    )
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    private var participantAnnotations: [SimulatorAnnotation] {
+        participants.compactMap { item in
+            guard let coordinate = item.coordinate else { return nil }
+            return SimulatorAnnotation(
+                title: item.title,
+                coordinate: coordinate,
+                tintColor: UIColor(item.color),
+                glyphSystemImage: "person.fill"
+            )
+        }
+    }
+
+    private var recommendationAnnotations: [SimulatorAnnotation] {
+        recommendations.compactMap { item in
+            guard let coordinate = item.coordinate else { return nil }
+            return SimulatorAnnotation(
+                title: item.title,
+                coordinate: coordinate,
+                tintColor: UIColor(red: 0.22, green: 0.62, blue: 0.96, alpha: 1),
+                glyphSystemImage: "mappin"
+            )
+        }
+    }
+
+    final class Coordinator: NSObject, MKMapViewDelegate {
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard let annotation = annotation as? SimulatorAnnotation else { return nil }
+
+            let identifier = "SimulatorAnnotationView"
+            let view: MKMarkerAnnotationView
+            if let reused = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView {
+                view = reused
+            } else {
+                view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
             }
-        }
-        .onAppear {
-            updateRegion()
-        }
-        .onChange(of: centerCoordinate?.latitude) { _, _ in updateRegion() }
-        .onChange(of: centerCoordinate?.longitude) { _, _ in updateRegion() }
-        .onChange(of: annotations.count) { _, _ in updateRegion() }
-    }
 
-    private func updateRegion() {
-        if let centerCoordinate {
-            region.center = centerCoordinate
-        } else if let first = annotations.first {
-            region.center = first.coordinate
+            view.annotation = annotation
+            view.markerTintColor = annotation.tintColor
+            view.glyphImage = UIImage(systemName: annotation.glyphSystemImage)
+            view.glyphTintColor = .white
+            view.canShowCallout = false
+            return view
         }
     }
 }
 
-private struct SimulatorMapAnnotationItem: Identifiable {
-    let id = UUID()
-    let title: String
+private final class SimulatorAnnotation: NSObject, MKAnnotation {
+    let title: String?
     let coordinate: CLLocationCoordinate2D
-    let color: UIColor
+    let tintColor: UIColor
+    let glyphSystemImage: String
+
+    init(title: String, coordinate: CLLocationCoordinate2D, tintColor: UIColor, glyphSystemImage: String) {
+        self.title = title
+        self.coordinate = coordinate
+        self.tintColor = tintColor
+        self.glyphSystemImage = glyphSystemImage
+    }
 }
 
 #Preview {
@@ -1688,12 +1719,17 @@ private final class MidpointLocationManager: NSObject, ObservableObject, CLLocat
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
         if status == .authorizedAlways || status == .authorizedWhenInUse {
-            manager.requestLocation()
+            DispatchQueue.main.async {
+                manager.requestLocation()
+            }
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        coordinate = locations.last?.coordinate
+        let latestCoordinate = locations.last?.coordinate
+        DispatchQueue.main.async { [weak self] in
+            self?.coordinate = latestCoordinate
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

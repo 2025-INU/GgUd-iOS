@@ -178,8 +178,9 @@ struct MyPageView: View {
     }
 
     private var displayName: String {
+        guard userSession.isLoggedIn else { return "로그인을 해주세요" }
         let trimmed = userSession.nickname.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "이은우" : trimmed
+        return trimmed.isEmpty ? "사용자" : trimmed
     }
 
     private func performLogout() {

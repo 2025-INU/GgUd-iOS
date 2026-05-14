@@ -197,7 +197,7 @@ struct WaitingRoomView: View {
         guard !members.isEmpty, allMembersDone else { return false }
 
         switch normalizedPromiseStatus {
-        case "", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING":
+        case "", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING", "SELECTING_MIDPOINT":
             return true
         default:
             return false
@@ -298,7 +298,10 @@ struct WaitingRoomView: View {
         switch summaryResultValue {
         case let .success(summary):
             self.summary = summary
+            print("[WaitingRoom] summary title:", summary.title ?? "nil")
+            print("[WaitingRoom] summary promiseDateTime:", summary.promiseDateTime ?? "nil")
         case let .failure(error):
+            print("[WaitingRoom] summary error:", error.localizedDescription)
             loadError = error.localizedDescription
         }
 
@@ -312,19 +315,26 @@ struct WaitingRoomView: View {
                     isDone: participant.locationSubmitted == true
                 )
             }
+            print("[WaitingRoom] participants count:", participants.count)
+            print("[WaitingRoom] members count:", members.count)
+            print("[WaitingRoom] allMembersDone:", allMembersDone)
         case let .failure(error):
+            print("[WaitingRoom] participants error:", error.localizedDescription)
             loadError = error.localizedDescription
         }
 
         switch statusResultValue {
         case let .success(statusResponse):
             promiseStatus = statusResponse.status
+            print("[WaitingRoom] promiseStatus:", statusResponse.status ?? "nil")
         case let .failure(error):
+            print("[WaitingRoom] status error:", error.localizedDescription)
             if loadError == nil {
                 loadError = error.localizedDescription
             }
         }
 
+        print("[WaitingRoom] shouldShowMidpointCTA:", shouldShowMidpointCTA)
         isLoading = false
     }
 
