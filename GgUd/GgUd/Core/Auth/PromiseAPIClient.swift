@@ -1444,3 +1444,291 @@ final class PromiseAPIClient {
         .resume()
     }
 }
+
+
+
+struct PromiseStatusSocketEvent: Decodable {
+    struct Payload: Decodable {
+        let previousStatus: String?
+        let newStatus: String?
+        let confirmedPlaceName: String?
+    }
+
+    let type: String
+    let promiseId: Int64?
+    let message: String?
+    let payload: Payload?
+    let timestamp: String?
+}
+
+struct PromiseLocationSocketEvent: Decodable {
+    let promiseId: Int64?
+    let userId: Int64?
+    let nickname: String?
+    let latitude: Double?
+    let longitude: Double?
+    let timestamp: String?
+}
+
+struct PromiseLocationPublishPayload: Encodable {
+    let latitude: Double
+    let longitude: Double
+}
+
+enum PromiseRealtimeSubscription: Hashable {
+    case status
+    case locations
+
+    func destination(for promiseId: Int64) -> String {
+        switch self {
+        case .status:
+            return "/topic/promises/\(promiseId)/status"
+        case .locations:
+            return "/topic/promises/\(promiseId)/locations"
+        }
+    }
+
+    var subscribeID: String {
+        switch self {
+        case .status:
+            return "promise-status"
+        case .locations:
+            return "promise-locations"
+        }
+    }
+}
+
+@MainActor
+final class PromiseRealtimeManager: ObservableObject {
+    enum ConnectionState: Equatable {
+        case disconnected
+        case connecting
+        case connected
+    }
+
+    @Published var latestStatusEvent: PromiseStatusSocketEvent?
+    @Published var latestLocationEvent: PromiseLocationSocketEvent?
+    @Published var connectionState: ConnectionState = .disconnected
+
+    private var task: URLSessionWebSocketTask?
+    private let session = URLSession(configuration: .default)
+    private var currentPromiseId: Int64?
+    private var currentAuthorization: String?
+    private var requestedSubscriptions: Set<PromiseRealtimeSubscription> = []
+    private var subscribedTopics: Set<PromiseRealtimeSubscription> = []
+
+    func connect(promiseId: Int64, accessToken: String, tokenType: String, subscriptions: Set<PromiseRealtimeSubscription>) {
+        let authorization = "\(tokenType) \(accessToken)"
+        if currentPromiseId == promiseId,
+           currentAuthorization == authorization,
+           requestedSubscriptions == subscriptions,
+           task != nil {
+            return
+        }
+
+        disconnect()
+        currentPromiseId = promiseId
+        currentAuthorization = authorization
+        requestedSubscriptions = subscriptions
+
+        guard let url = URL(string: "ws://3.37.196.242/ws/websocket") else {
+            print("[PromiseRealtime] invalid websocket url")
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        request.setValue("v12.stomp, v11.stomp, v10.stomp", forHTTPHeaderField: "Sec-WebSocket-Protocol")
+
+        let webSocketTask = session.webSocketTask(with: request)
+        task = webSocketTask
+        connectionState = .connecting
+        webSocketTask.resume()
+
+        print("[PromiseRealtime] connecting to promiseId:", promiseId, "subscriptions:", subscriptions.map { $0.subscribeID }.joined(separator: ","))
+        print("[PromiseRealtime] websocket url:", url.absoluteString)
+        sendConnectFrame(authorization: authorization)
+        receiveNextMessage()
+    }
+
+    func disconnect() {
+        task?.cancel(with: .goingAway, reason: nil)
+        task = nil
+        currentPromiseId = nil
+        currentAuthorization = nil
+        requestedSubscriptions = []
+        subscribedTopics = []
+        connectionState = .disconnected
+    }
+
+    func publishMyLocation(latitude: Double, longitude: Double) {
+        guard let promiseId = currentPromiseId else { return }
+        let payload = PromiseLocationPublishPayload(latitude: latitude, longitude: longitude)
+        guard let data = try? JSONEncoder().encode(payload),
+              let body = String(data: data, encoding: .utf8) else {
+            print("[PromiseRealtime] failed to encode location payload")
+            return
+        }
+
+        let frame = [
+            "SEND",
+            "destination:/app/promises/\(promiseId)/location",
+            "content-type:application/json",
+            "content-length:\(body.utf8.count)",
+            "",
+            body + "\0"
+        ].joined(separator: "\n")
+
+        task?.send(.string(frame)) { error in
+            if let error {
+                print("[PromiseRealtime] publish location error:", error.localizedDescription)
+            } else {
+                print("[PromiseRealtime] published my location for promiseId:", promiseId)
+            }
+        }
+    }
+
+    private func sendConnectFrame(authorization: String) {
+        let frame = [
+            "CONNECT",
+            "accept-version:1.2",
+            "heart-beat:10000,10000",
+            "Authorization:\(authorization)",
+            "",
+            "\0"
+        ].joined(separator: "\n")
+
+        task?.send(.string(frame)) { error in
+            if let error {
+                print("[PromiseRealtime] connect frame error:", error.localizedDescription)
+            } else {
+                print("[PromiseRealtime] connect frame sent")
+            }
+        }
+    }
+
+    private func sendSubscribeFrames() {
+        guard let promiseId = currentPromiseId else { return }
+
+        for subscription in requestedSubscriptions where !subscribedTopics.contains(subscription) {
+            let frame = [
+                "SUBSCRIBE",
+                "id:\(subscription.subscribeID)-\(promiseId)",
+                "destination:\(subscription.destination(for: promiseId))",
+                "",
+                "\0"
+            ].joined(separator: "\n")
+
+            task?.send(.string(frame)) { [weak self] error in
+                if let error {
+                    print("[PromiseRealtime] subscribe frame error (\(subscription.subscribeID)):", error.localizedDescription)
+                    return
+                }
+                Task { @MainActor in
+                    self?.subscribedTopics.insert(subscription)
+                }
+                print("[PromiseRealtime] subscribed to \(subscription.destination(for: promiseId))")
+            }
+        }
+    }
+
+    private func receiveNextMessage() {
+        task?.receive { [weak self] result in
+            guard let self else { return }
+
+            switch result {
+            case let .success(message):
+                Task { @MainActor in
+                    self.handleMessage(message)
+                    self.receiveNextMessage()
+                }
+            case let .failure(error):
+                Task { @MainActor in
+                    print("[PromiseRealtime] receive error:", error.localizedDescription)
+                    self.connectionState = .disconnected
+                    self.subscribedTopics = []
+                }
+            }
+        }
+    }
+
+    private func handleMessage(_ message: URLSessionWebSocketTask.Message) {
+        let text: String
+        switch message {
+        case let .string(value):
+            text = value
+        case let .data(data):
+            text = String(decoding: data, as: UTF8.self)
+        @unknown default:
+            return
+        }
+
+        for frame in text.split(separator: "\0") {
+            processFrame(String(frame))
+        }
+    }
+
+    private func processFrame(_ frame: String) {
+        let normalized = frame.replacingOccurrences(of: "\r\n", with: "\n")
+
+        if normalized.hasPrefix("CONNECTED") {
+            connectionState = .connected
+            print("[PromiseRealtime] connected")
+            sendSubscribeFrames()
+            return
+        }
+
+        guard let separatorRange = normalized.range(of: "\n\n") else { return }
+
+        let headerPart = String(normalized[..<separatorRange.lowerBound])
+        let bodyPart = String(normalized[separatorRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let headerLines = headerPart.components(separatedBy: "\n")
+        let command = headerLines.first ?? ""
+        let headers = parseHeaders(Array(headerLines.dropFirst()))
+
+        switch command {
+        case "MESSAGE":
+            handleMessageBody(bodyPart, headers: headers)
+        case "ERROR":
+            print("[PromiseRealtime] server error frame:", bodyPart)
+        default:
+            break
+        }
+    }
+
+    private func handleMessageBody(_ body: String, headers: [String: String]) {
+        guard !body.isEmpty, let data = body.data(using: .utf8) else { return }
+        let destination = headers["destination"] ?? ""
+
+        if destination.contains("/status") {
+            do {
+                latestStatusEvent = try JSONDecoder().decode(PromiseStatusSocketEvent.self, from: data)
+            } catch {
+                print("[PromiseRealtime] status decode error:", error.localizedDescription)
+                print("[PromiseRealtime] status raw body:", body)
+            }
+            return
+        }
+
+        if destination.contains("/locations") {
+            do {
+                latestLocationEvent = try JSONDecoder().decode(PromiseLocationSocketEvent.self, from: data)
+            } catch {
+                print("[PromiseRealtime] locations decode error:", error.localizedDescription)
+                print("[PromiseRealtime] locations raw body:", body)
+            }
+        }
+    }
+
+    private func parseHeaders(_ lines: [String]) -> [String: String] {
+        var headers: [String: String] = [:]
+        for line in lines {
+            guard let separator = line.firstIndex(of: ":") else { continue }
+            let key = String(line[..<separator])
+            let value = String(line[line.index(after: separator)...])
+            headers[key] = value
+        }
+        return headers
+    }
+}

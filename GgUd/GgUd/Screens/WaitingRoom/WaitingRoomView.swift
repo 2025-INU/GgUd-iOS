@@ -26,6 +26,7 @@ struct WaitingRoomView: View {
     @State private var cachedInviteCode: String?
     @State private var sharePayload: SharePayload?
     @State private var inviteAlertMessage: String?
+    @StateObject private var promiseRealtime = PromiseRealtimeManager()
 
     
     var body: some View {
@@ -147,9 +148,16 @@ struct WaitingRoomView: View {
         }
         .task(id: promiseId) {
             await loadWaitingRoom()
+            connectStatusSocketIfPossible()
         }
         .onAppear {
             Task { await loadWaitingRoom() }
+        }
+        .onDisappear {
+            promiseRealtime.disconnect()
+        }
+        .onReceive(promiseRealtime.$latestStatusEvent.compactMap { $0 }) { event in
+            Task { await handleSocketEvent(event) }
         }
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
@@ -464,6 +472,40 @@ struct WaitingRoomView: View {
         }
 
         return message
+    }
+
+
+    private func connectStatusSocketIfPossible() {
+        print("[WaitingRoomSocket] connectStatusSocketIfPossible called for promiseId:", promiseId)
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            print("[WaitingRoomSocket] missing backend access token")
+            return
+        }
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+        print("[WaitingRoomSocket] attempting connect with tokenType:", tokenType)
+        promiseRealtime.connect(
+            promiseId: promiseId,
+            accessToken: accessToken,
+            tokenType: tokenType,
+            subscriptions: [.status]
+        )
+    }
+
+    @MainActor
+    private func handleSocketEvent(_ event: PromiseStatusSocketEvent) async {
+        print("[WaitingRoomSocket] received type:", event.type)
+        if let newStatus = event.payload?.newStatus {
+            promiseStatus = newStatus
+        }
+
+        await loadWaitingRoom()
+
+        switch event.type {
+        case "ALL_LOCATIONS_SUBMITTED", "MIDPOINT_CONFIRMED":
+            navigateToMidpoint = true
+        default:
+            break
+        }
     }
 
 }

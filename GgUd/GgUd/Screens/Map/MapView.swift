@@ -9,6 +9,7 @@ struct MapView: View {
     let fallbackTitle: String
 
     @State private var titleText: String
+    @State private var hostId: Int64?
     @State private var isLoading = false
     @State private var loadError: String?
     @State private var actionMessage: String?
@@ -16,6 +17,7 @@ struct MapView: View {
     @State private var arrivalBadgeText = "0/0 도착"
     @State private var directionCards: [ParticipantDirectionsCard] = []
     @State private var selectedRouteID: UUID?
+    @State private var selectedRouteTitle: String?
     @State private var selectedRouteCoordinates: [CLLocationCoordinate2D] = []
     @State private var participantAnnotations: [DirectionsAnnotation] = []
     @State private var destinationAnnotation: DirectionsAnnotation?
@@ -23,6 +25,10 @@ struct MapView: View {
     @State private var mapCenter = CLLocationCoordinate2D(latitude: 37.4979, longitude: 127.0276)
     @State private var regionSpan = MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
     @State private var isSheetExpanded = false
+    @State private var currentDestinationCoordinate: CLLocationCoordinate2D?
+    @StateObject private var promiseRealtime = PromiseRealtimeManager()
+    @StateObject private var liveLocationManager = MapLiveLocationManager()
+    @State private var navigateToSettlement = false
     @GestureState private var dragOffset: CGFloat = 0
 
     init(promiseId: Int64, title: String = "약속") {
@@ -34,6 +40,19 @@ struct MapView: View {
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
+
+            NavigationLink(
+                destination: SettlementView(
+                    promiseId: promiseId,
+                    appointmentTitle: titleText,
+                    hostId: hostId
+                )
+                .environmentObject(userSession),
+                isActive: $navigateToSettlement
+            ) {
+                EmptyView()
+            }
+            .hidden()
 
             VStack(spacing: 0) {
                 topBar
@@ -74,11 +93,36 @@ struct MapView: View {
                 }
             }
         }
-        .task {
+        .task(id: promiseId) {
             await loadScreenData()
+            connectRealtimeIfPossible()
+            liveLocationManager.startTracking()
         }
         .refreshable {
             await loadScreenData()
+        }
+        .onDisappear {
+            promiseRealtime.disconnect()
+            liveLocationManager.stopTracking()
+        }
+        .onReceive(promiseRealtime.$latestLocationEvent.compactMap { $0 }) { event in
+            Task {
+                await handleLocationEvent(event)
+            }
+        }
+        .onReceive(promiseRealtime.$latestStatusEvent.compactMap { $0 }) { event in
+            Task {
+                await handleStatusEvent(event)
+            }
+        }
+        .onReceive(liveLocationManager.$coordinate.compactMap { $0 }) { coordinate in
+            Task {
+                await handleLocalCoordinateUpdate(coordinate)
+            }
+        }
+        .onReceive(promiseRealtime.$connectionState) { state in
+            guard state == .connected, let coordinate = liveLocationManager.coordinate else { return }
+            promiseRealtime.publishMyLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         }
         .alert("길찾기", isPresented: $isShowingAlert) {
             Button("확인", role: .cancel) {
@@ -360,6 +404,7 @@ private extension MapView {
         switch summaryValue {
         case let .success(summary):
             titleText = summary.title ?? fallbackTitle
+            hostId = summary.hostId
         case .failure:
             titleText = fallbackTitle
         }
@@ -374,13 +419,16 @@ private extension MapView {
                let lon = destination.longitude {
                 let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
                 destinationCoordinate = coordinate
+                currentDestinationCoordinate = coordinate
                 destinationAnnotation = DirectionsAnnotation(
                     title: destination.name ?? "약속 장소",
                     coordinate: coordinate,
-                    tint: .systemGreen
+                    tint: .systemGreen,
+                    userId: nil
                 )
                 mapCenter = coordinate
             } else {
+                currentDestinationCoordinate = nil
                 destinationAnnotation = nil
             }
 
@@ -417,7 +465,8 @@ private extension MapView {
                 return DirectionsAnnotation(
                     title: participant.nickname ?? "참여자",
                     coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
-                    tint: .systemBlue
+                    tint: .systemBlue,
+                    userId: participant.userId
                 )
             }
             totalParticipantCount = max(mergedParticipants.count, departureParticipants.count, liveParticipants.count, participantAnnotations.count)
@@ -431,7 +480,7 @@ private extension MapView {
                 )
             }
 
-            if let current = participantsForDirections.first(where: { $0.nickname == userSession.nickname }) ?? participantsForDirections.first {
+            if let current = participantsForDirections.first(where: { $0.userId == userSession.kakaoUserId }) ?? participantsForDirections.first(where: { $0.nickname == userSession.nickname }) ?? participantsForDirections.first {
                 mapCenter = current.coordinate
             }
 
@@ -453,7 +502,7 @@ private extension MapView {
 
         if let destinationCoordinate {
             let selectedParticipants: [DirectionParticipant]
-            if let currentUser = participantsForDirections.first(where: { $0.nickname == userSession.nickname }) {
+            if let currentUser = participantsForDirections.first(where: { $0.userId == userSession.kakaoUserId }) ?? participantsForDirections.first(where: { $0.nickname == userSession.nickname }) {
                 selectedParticipants = [currentUser]
             } else if let firstParticipant = participantsForDirections.first {
                 selectedParticipants = [firstParticipant]
@@ -472,15 +521,20 @@ private extension MapView {
                 cards.append(ParticipantDirectionsCard(nickname: participant.nickname, routeOptions: routeOptions))
             }
             directionCards = cards
-            if let firstOption = cards.first?.routeOptions.first {
+            if let preferredTitle = selectedRouteTitle,
+               let matching = cards.first?.routeOptions.first(where: { $0.title == preferredTitle }) {
+                selectRoute(matching)
+            } else if let firstOption = cards.first?.routeOptions.first {
                 selectRoute(firstOption)
             } else {
                 selectedRouteID = nil
+                selectedRouteTitle = nil
                 selectedRouteCoordinates = []
             }
         } else {
             directionCards = []
             selectedRouteID = nil
+            selectedRouteTitle = nil
             selectedRouteCoordinates = []
         }
 
@@ -523,7 +577,126 @@ private extension MapView {
     @MainActor
     func selectRoute(_ option: DirectionRouteOptionDisplay) {
         selectedRouteID = option.id
+        selectedRouteTitle = option.title
         selectedRouteCoordinates = option.polylineCoordinates
+    }
+
+    func connectRealtimeIfPossible() {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            print("[MapRealtime] missing backend access token")
+            return
+        }
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+        print("[MapRealtime] connecting realtime for promiseId:", promiseId)
+        promiseRealtime.connect(
+            promiseId: promiseId,
+            accessToken: accessToken,
+            tokenType: tokenType,
+            subscriptions: [.locations, .status]
+        )
+    }
+
+    @MainActor
+    func handleStatusEvent(_ event: PromiseStatusSocketEvent) async {
+        print("[MapRealtime] received status type:", event.type)
+        if let status = event.payload?.newStatus {
+            print("[MapRealtime] newStatus:", status)
+        }
+
+        switch event.type {
+        case "PROMISE_COMPLETED":
+            actionMessage = event.message ?? "약속이 종료되어 정산 화면으로 이동해요."
+            isShowingAlert = false
+            navigateToSettlement = true
+        default:
+            await loadScreenData()
+        }
+    }
+
+    @MainActor
+    func handleLocationEvent(_ event: PromiseLocationSocketEvent) async {
+        guard let latitude = event.latitude, let longitude = event.longitude else { return }
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        applyParticipantLocation(userId: event.userId, nickname: event.nickname, coordinate: coordinate)
+
+        if event.userId == userSession.kakaoUserId || (!userSession.nickname.isEmpty && event.nickname == userSession.nickname) {
+            await refreshCurrentUserDirections(using: coordinate, fallbackNickname: event.nickname)
+        }
+    }
+
+    @MainActor
+    func handleLocalCoordinateUpdate(_ coordinate: CLLocationCoordinate2D) async {
+        let nickname = userSession.nickname.isEmpty ? "나" : userSession.nickname
+        applyParticipantLocation(userId: userSession.kakaoUserId, nickname: nickname, coordinate: coordinate)
+
+        if promiseRealtime.connectionState == .connected {
+            promiseRealtime.publishMyLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        }
+
+        await refreshCurrentUserDirections(using: coordinate, fallbackNickname: nickname)
+    }
+
+    @MainActor
+    func applyParticipantLocation(userId: Int64?, nickname: String?, coordinate: CLLocationCoordinate2D) {
+        let resolvedNickname = (nickname?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? nickname! : "참여자")
+
+        if let index = participantAnnotations.firstIndex(where: {
+            if let existingUserId = $0.userId, let userId {
+                return existingUserId == userId
+            }
+            return $0.title == resolvedNickname
+        }) {
+            let existing = participantAnnotations[index]
+            participantAnnotations[index] = DirectionsAnnotation(
+                title: existing.title,
+                coordinate: coordinate,
+                tint: existing.tint,
+                userId: existing.userId ?? userId
+            )
+        } else {
+            participantAnnotations.append(
+                DirectionsAnnotation(
+                    title: resolvedNickname,
+                    coordinate: coordinate,
+                    tint: .systemBlue,
+                    userId: userId
+                )
+            )
+        }
+
+        totalParticipantCount = max(totalParticipantCount, participantAnnotations.count)
+
+        if userId == userSession.kakaoUserId || (!userSession.nickname.isEmpty && resolvedNickname == userSession.nickname) {
+            mapCenter = coordinate
+        }
+    }
+
+    @MainActor
+    func refreshCurrentUserDirections(using coordinate: CLLocationCoordinate2D, fallbackNickname: String?) async {
+        guard let destination = currentDestinationCoordinate,
+              let accessToken = userSession.backendAccessToken,
+              !accessToken.isEmpty else { return }
+
+        let nickname = userSession.nickname.isEmpty ? (fallbackNickname ?? "나") : userSession.nickname
+        let participant = DirectionParticipant(userId: userSession.kakaoUserId, nickname: nickname, coordinate: coordinate)
+        let routeOptions = await loadDirections(
+            accessToken: accessToken,
+            tokenType: userSession.backendTokenType ?? "Bearer",
+            participant: participant,
+            destination: destination
+        )
+        directionCards = [ParticipantDirectionsCard(nickname: nickname, routeOptions: routeOptions)]
+
+        if let preferredTitle = selectedRouteTitle,
+           let matching = routeOptions.first(where: { $0.title == preferredTitle }) {
+            selectRoute(matching)
+        } else if let firstOption = routeOptions.first {
+            selectRoute(firstOption)
+        } else {
+            selectedRouteID = nil
+            selectedRouteTitle = nil
+            selectedRouteCoordinates = []
+        }
     }
 
     func arrivalBadgeText(from raw: [String: JSONValue], totalParticipants: Int) -> String {
@@ -687,6 +860,7 @@ private struct DirectionsAnnotation: Identifiable {
     let title: String
     let coordinate: CLLocationCoordinate2D
     let tint: UIColor
+    let userId: Int64?
 }
 
 private struct DirectionParticipant {
@@ -772,4 +946,53 @@ private struct DirectionStepDisplay: Identifiable {
 
 private extension CLLocationCoordinate2D {
     var key: String { "\(latitude),\(longitude)" }
+}
+
+
+private final class MapLiveLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+    @Published var coordinate: CLLocationCoordinate2D?
+
+    private let manager = CLLocationManager()
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        manager.distanceFilter = 15
+    }
+
+    func startTracking() {
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.startUpdatingLocation()
+        default:
+            break
+        }
+    }
+
+    func stopTracking() {
+        manager.stopUpdatingLocation()
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        if status == .authorizedAlways || status == .authorizedWhenInUse {
+            DispatchQueue.main.async {
+                manager.startUpdatingLocation()
+            }
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let latestCoordinate = locations.last?.coordinate else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.coordinate = latestCoordinate
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        print("[MapRealtime] location error:", error.localizedDescription)
+    }
 }

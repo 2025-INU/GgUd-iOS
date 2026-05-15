@@ -955,8 +955,8 @@ private extension MidpointView {
 
         let tokenType = userSession.backendTokenType ?? "Bearer"
 
-        let startSelectionResult: Result<Void, Error> = await withCheckedContinuation { continuation in
-            PromiseAPIClient.shared.startMidpointSelection(
+        let statusResult: Result<PromiseStatusResponse, Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getPromiseStatus(
                 promiseId: promiseId,
                 accessToken: accessToken,
                 tokenType: tokenType
@@ -965,13 +965,45 @@ private extension MidpointView {
             }
         }
 
-        switch startSelectionResult {
-        case .success:
-            break
-        case let .failure(error):
-            loadError = error.localizedDescription
-            isLoading = false
-            return
+        let normalizedStatus: String = {
+            switch statusResult {
+            case let .success(response):
+                return (response.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            case .failure:
+                return ""
+            }
+        }()
+
+        let shouldStartSelection: Bool = {
+            switch normalizedStatus {
+            case "", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING":
+                return true
+            default:
+                return false
+            }
+        }()
+
+        if shouldStartSelection {
+            let startSelectionResult: Result<Void, Error> = await withCheckedContinuation { continuation in
+                PromiseAPIClient.shared.startMidpointSelection(
+                    promiseId: promiseId,
+                    accessToken: accessToken,
+                    tokenType: tokenType
+                ) { result in
+                    continuation.resume(returning: result)
+                }
+            }
+
+            switch startSelectionResult {
+            case .success:
+                break
+            case let .failure(error):
+                loadError = error.localizedDescription
+                isLoading = false
+                return
+            }
+        } else {
+            print("[Midpoint] skip startMidpointSelection for status: \(normalizedStatus)")
         }
 
         async let participantsResult: Result<[PromiseParticipantResponse], Error> = withCheckedContinuation { continuation in
