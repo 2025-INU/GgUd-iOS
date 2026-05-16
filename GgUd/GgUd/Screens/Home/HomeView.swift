@@ -20,6 +20,7 @@ struct HomeView: View {
     @State private var invitePreviewError: String?
     @State private var joinAlertMessage: String?
     @State private var joinedPromiseId: Int64?
+    @State private var presentedWaitingRoomPromiseId: Int64?
     @State private var selectedMapPromise: HomePromise?
     @State private var promisePendingCompletion: HomePromise?
     @State private var isCompletingPromiseId: Int64?
@@ -98,7 +99,9 @@ struct HomeView: View {
                                         }
 
                                         if selectedSegment == .scheduled, item.confirmedPlace == nil {
-                                            joinedPromiseId = promiseId
+                                            Task {
+                                                await openScheduledPromiseIfNeeded(promiseId: promiseId)
+                                            }
                                         }
                                     }
                                 }
@@ -199,25 +202,46 @@ struct HomeView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .waitingRoomShouldReturnHome)) { _ in
+            print("[Home] received waitingRoomShouldReturnHome")
+            print("[Home] before return home joinedPromiseId:", joinedPromiseId as Any, "presentedWaitingRoomPromiseId:", presentedWaitingRoomPromiseId as Any)
             joinedPromiseId = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                presentedWaitingRoomPromiseId = nil
+                print("[Home] cleared presentedWaitingRoomPromiseId after waitingRoomShouldReturnHome")
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("closeWaitingRoomFlow"))) { _ in
+            print("[Home] received closeWaitingRoomFlow")
+            print("[Home] before close flow joinedPromiseId:", joinedPromiseId as Any, "presentedWaitingRoomPromiseId:", presentedWaitingRoomPromiseId as Any)
             joinedPromiseId = nil
             showJoinSheet = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                presentedWaitingRoomPromiseId = nil
+                print("[Home] cleared presentedWaitingRoomPromiseId after closeWaitingRoomFlow")
+            }
         }
         .background {
             ZStack {
                 NavigationLink(
                     destination: Group {
-                        if let joinedPromiseId {
-                            WaitingRoomView(promiseId: joinedPromiseId)
+                        if let promiseId = presentedWaitingRoomPromiseId ?? joinedPromiseId {
+                            WaitingRoomView(promiseId: promiseId)
                         } else {
                             EmptyView()
                         }
                     },
                     isActive: Binding(
                         get: { joinedPromiseId != nil },
-                        set: { if !$0 { joinedPromiseId = nil } }
+                        set: {
+                            print("[Home] waiting room link set isActive:", $0)
+                            if !$0 {
+                                joinedPromiseId = nil
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                    presentedWaitingRoomPromiseId = nil
+                                    print("[Home] waiting room link cleared presentedWaitingRoomPromiseId from setter")
+                                }
+                            }
+                        }
                     )
                 ) {
                     EmptyView()
@@ -246,6 +270,46 @@ struct HomeView: View {
 
     private var currentItems: [HomePromise] {
         selectedSegment == .ongoing ? ongoing : scheduled
+    }
+
+    @MainActor
+    private func openScheduledPromiseIfNeeded(promiseId: Int64) async {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            loadError = "로그인 정보가 없습니다."
+            return
+        }
+
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+        let statusResult: Result<PromiseStatusResponse, Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getPromiseStatus(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch statusResult {
+        case let .success(statusResponse):
+            let normalizedStatus = (statusResponse.status ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .uppercased()
+
+            if normalizedStatus == "PLACE_CONFIRMED" {
+                print("[Home] promiseId \(promiseId) already PLACE_CONFIRMED. staying on home")
+                await loadPromises()
+                return
+            }
+
+            presentedWaitingRoomPromiseId = promiseId
+            joinedPromiseId = promiseId
+
+        case let .failure(error):
+            print("[Home] failed to fetch latest promise status for promiseId \(promiseId):", error.localizedDescription)
+            presentedWaitingRoomPromiseId = promiseId
+            joinedPromiseId = promiseId
+        }
     }
 
     private var emptyMessage: String {
@@ -284,6 +348,7 @@ struct HomeView: View {
             inviteCodeInput = ""
             await loadPromises()
             if let promiseId = promise.id {
+                presentedWaitingRoomPromiseId = promiseId
                 joinedPromiseId = promiseId
             } else {
                 presentJoinAlert("약속 참여는 성공했지만 약속 정보를 불러오지 못했어요.")
@@ -426,7 +491,7 @@ struct HomeView: View {
 
                 switch result {
                 case let .success(promises):
-                    let mapped = promises.map(mapToHomePromise)
+                    let mapped = promises.compactMap(mapToHomePromise)
                     ongoing = mapped.filter { $0.segment == .ongoing }.map(\.promise)
                     scheduled = mapped.filter { $0.segment == .scheduled }.map(\.promise)
 
@@ -439,13 +504,24 @@ struct HomeView: View {
         }
     }
 
-    private func mapToHomePromise(_ promise: BackendPromise) -> (segment: HomeSegment, promise: HomePromise) {
-        let status = promise.status ?? ""
+    private func mapToHomePromise(_ promise: BackendPromise) -> (segment: HomeSegment, promise: HomePromise)? {
+        let rawStatus = (promise.status ?? "").uppercased()
+        let promiseDate = parsePromiseDate(promise.promiseDateTime)
+        let now = Date()
+
+        let segment: HomeSegment
+        if rawStatus == "IN_PROGRESS" {
+            segment = .ongoing
+        } else if let promiseDate, promiseDate > now {
+            segment = .scheduled
+        } else {
+            return nil
+        }
+
         let dateText = formatDate(promise.promiseDateTime)
         let timeText = formatTime(promise.promiseDateTime)
         let peopleCount = max(Int(promise.participantCount ?? 0), 1)
         let place = promise.confirmedPlaceName ?? "장소 미정"
-        let segment: HomeSegment = status == "IN_PROGRESS" ? .ongoing : .scheduled
 
         return (
             segment,

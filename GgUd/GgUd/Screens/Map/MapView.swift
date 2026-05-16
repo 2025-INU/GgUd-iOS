@@ -131,6 +131,8 @@ struct MapView: View {
         } message: {
             Text(actionMessage ?? "알 수 없는 오류가 발생했어요.")
         }
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
     }
 
     private var topBar: some View {

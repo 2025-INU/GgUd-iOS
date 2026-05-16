@@ -21,6 +21,8 @@ struct DepartureSetupView: View {
     @State private var locationAlertMessage: String = ""
     @State private var navigateToWaitingRoom: Bool = false
     @State private var isSubmitting = false
+    @State private var isClosingFlow = false
+    @State private var shouldDismissAfterChildClose = false
     @State private var summary: PromiseSummaryResponse?
 
     var body: some View {
@@ -101,6 +103,24 @@ struct DepartureSetupView: View {
         .task(id: promiseId) {
             await loadSummary()
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("closeWaitingRoomFlow"))) { _ in
+            print("[DepartureSetup] received closeWaitingRoomFlow")
+            print("[DepartureSetup] before close navigateToWaitingRoom:", navigateToWaitingRoom)
+            handleCloseFlowFromNotifications()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("waitingRoomShouldReturnHome"))) { _ in
+            print("[DepartureSetup] received waitingRoomShouldReturnHome")
+            print("[DepartureSetup] before return navigateToWaitingRoom:", navigateToWaitingRoom)
+            handleCloseFlowFromNotifications()
+        }
+        .onChange(of: navigateToWaitingRoom) { _, newValue in
+            guard isClosingFlow, !newValue, shouldDismissAfterChildClose else { return }
+            print("[DepartureSetup] child waiting room closed, dismissing departure setup")
+            shouldDismissAfterChildClose = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                dismiss()
+            }
+        }
         .onChange(of: locationManager.address) { newValue in
             guard let newValue else { return }
             selectedLocation = newValue
@@ -120,6 +140,20 @@ struct DepartureSetupView: View {
         } message: {
             Text(locationAlertMessage)
         }
+    }
+
+    @MainActor
+    private func handleCloseFlowFromNotifications() {
+        guard !isClosingFlow else { return }
+        isClosingFlow = true
+
+        if navigateToWaitingRoom {
+            shouldDismissAfterChildClose = true
+            navigateToWaitingRoom = false
+            return
+        }
+
+        dismiss()
     }
 
     private var topBar: some View {

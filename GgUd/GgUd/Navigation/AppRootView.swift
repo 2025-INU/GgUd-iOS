@@ -18,6 +18,7 @@ struct AppRootView: View {
     @State private var homePath = NavigationPath()
     @State private var historyPath = NavigationPath()
     @State private var mypagePath = NavigationPath()
+    @State private var rootResetID = UUID()
     @EnvironmentObject private var userSession: UserSessionStore
     @State private var didSyncMyInfo = false
 
@@ -39,6 +40,7 @@ struct AppRootView: View {
                     }
                 }
             }
+            .id(rootResetID)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .safeAreaInset(edge: .bottom) {
@@ -75,10 +77,15 @@ struct AppRootView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("waitingRoomShouldReturnHome"))) { _ in
-            selected = .home
-            homePath = NavigationPath()
-            historyPath = NavigationPath()
-            mypagePath = NavigationPath()
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                selected = .home
+                homePath = NavigationPath()
+                historyPath = NavigationPath()
+                mypagePath = NavigationPath()
+                rootResetID = UUID()
+            }
         }
     }
 

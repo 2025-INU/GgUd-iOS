@@ -23,6 +23,8 @@ struct CreateAppointmentView: View {
     @State private var isSubmitting = false
     @State private var alertMessage = ""
     @State private var showAlert = false
+    @State private var isClosingFlow = false
+    @State private var shouldDismissAfterChildClose = false
 
     private var isFormValid: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -238,14 +240,23 @@ struct CreateAppointmentView: View {
             .hidden()
         }
         .onReceive(NotificationCenter.default.publisher(for: .waitingRoomShouldReturnHome)) { _ in
-            navigateToWaitingRoom = false
-            createdPromiseId = nil
-            dismiss()
+            print("[CreateAppointment] received waitingRoomShouldReturnHome")
+            print("[CreateAppointment] before return navigateToWaitingRoom:", navigateToWaitingRoom, "createdPromiseId:", createdPromiseId as Any)
+            handleCloseFlowFromNotifications()
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("closeWaitingRoomFlow"))) { _ in
-            navigateToWaitingRoom = false
+            print("[CreateAppointment] received closeWaitingRoomFlow")
+            print("[CreateAppointment] before close navigateToWaitingRoom:", navigateToWaitingRoom, "createdPromiseId:", createdPromiseId as Any)
+            handleCloseFlowFromNotifications()
+        }
+        .onChange(of: navigateToWaitingRoom) { _, newValue in
+            guard isClosingFlow, !newValue, shouldDismissAfterChildClose else { return }
+            print("[CreateAppointment] child waiting room closed, dismissing create appointment")
+            shouldDismissAfterChildClose = false
             createdPromiseId = nil
-            dismiss()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                dismiss()
+            }
         }
         .navigationBarHidden(true)
         .toolbar(.hidden, for: .tabBar)
@@ -298,6 +309,21 @@ struct CreateAppointmentView: View {
         isNameFocused = false
         isDateFocused = false
         isTimeFocused = false
+    }
+
+    @MainActor
+    private func handleCloseFlowFromNotifications() {
+        guard !isClosingFlow else { return }
+        isClosingFlow = true
+
+        if navigateToWaitingRoom {
+            shouldDismissAfterChildClose = true
+            navigateToWaitingRoom = false
+            return
+        }
+
+        createdPromiseId = nil
+        dismiss()
     }
 
     private func submitPromise() {

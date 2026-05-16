@@ -147,11 +147,12 @@ struct WaitingRoomView: View {
             }
         }
         .task(id: promiseId) {
-            await loadWaitingRoom()
+            let statusAfterLoad = await loadWaitingRoom()
+            guard statusAfterLoad != "PLACE_CONFIRMED" else {
+                print("[WaitingRoom] skipping websocket connect because status is already PLACE_CONFIRMED")
+                return
+            }
             connectStatusSocketIfPossible()
-        }
-        .onAppear {
-            Task { await loadWaitingRoom() }
         }
         .onDisappear {
             promiseRealtime.disconnect()
@@ -260,10 +261,11 @@ struct WaitingRoomView: View {
     }
 
     @MainActor
-    private func loadWaitingRoom() async {
+    @discardableResult
+    private func loadWaitingRoom() async -> String {
         guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
             loadError = "로그인 정보가 없습니다."
-            return
+            return normalizedPromiseStatus
         }
 
         isLoading = true
@@ -344,6 +346,15 @@ struct WaitingRoomView: View {
 
         print("[WaitingRoom] shouldShowMidpointCTA:", shouldShowMidpointCTA)
         isLoading = false
+
+        let finalStatus = normalizedPromiseStatus
+
+        if finalStatus == "PLACE_CONFIRMED" {
+            print("[WaitingRoom] status already PLACE_CONFIRMED. returning to home")
+            returnToHomeAfterPlaceConfirmed()
+        }
+
+        return finalStatus
     }
 
     @MainActor
@@ -492,6 +503,18 @@ struct WaitingRoomView: View {
     }
 
     @MainActor
+    private func returnToHomeAfterPlaceConfirmed() {
+        promiseRealtime.disconnect()
+        NotificationCenter.default.post(name: Notification.Name("closeWaitingRoomFlow"), object: nil)
+        NotificationCenter.default.post(name: .waitingRoomShouldReturnHome, object: nil)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            dismiss()
+        }
+    }
+
+
+    @MainActor
     private func handleSocketEvent(_ event: PromiseStatusSocketEvent) async {
         print("[WaitingRoomSocket] received type:", event.type)
         if let newStatus = event.payload?.newStatus {
@@ -503,6 +526,9 @@ struct WaitingRoomView: View {
         switch event.type {
         case "ALL_LOCATIONS_SUBMITTED", "MIDPOINT_CONFIRMED":
             navigateToMidpoint = true
+        case "PLACE_CONFIRMED":
+            print("[WaitingRoomSocket] PLACE_CONFIRMED received. returning to home")
+            returnToHomeAfterPlaceConfirmed()
         default:
             break
         }

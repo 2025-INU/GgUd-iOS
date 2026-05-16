@@ -1335,9 +1335,13 @@ private extension MidpointView {
 
         switch result {
         case .success:
-            actionMessage = "최종 장소를 확정했어요."
-            isShowingActionAlert = true
-            dismiss()
+            print("[Midpoint] final place confirmed. closing waiting room flow")
+            NotificationCenter.default.post(name: Notification.Name("closeWaitingRoomFlow"), object: nil)
+            NotificationCenter.default.post(name: Notification.Name("waitingRoomShouldReturnHome"), object: nil)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                dismiss()
+            }
         case let .failure(error):
             actionMessage = error.localizedDescription
             isShowingActionAlert = true

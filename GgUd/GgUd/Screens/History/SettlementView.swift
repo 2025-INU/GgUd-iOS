@@ -291,6 +291,60 @@ struct SettlementView: View {
     }
 
     @MainActor
+    private func handleLoadSettlementResult(_ result: Result<SettlementResponse, Error>) {
+        isLoading = false
+
+        switch result {
+        case let .success(response):
+            print("[Settlement] loadSettlement success")
+            print("[Settlement] totalAmount:", response.totalAmount as Any)
+            print("[Settlement] perPersonAmount:", response.perPersonAmount as Any)
+            print("[Settlement] settlementCompleted:", response.settlementCompleted as Any)
+            print("[Settlement] expenses count:", response.expenses?.count as Any)
+            print("[Settlement] transfers count:", response.transfers?.count as Any)
+
+            if let expenses = response.expenses {
+                for expense in expenses {
+                    let userId = expense.userId.map { String($0) } ?? "nil"
+                    let nickname = expense.nickname ?? "nil"
+                    let paid = expense.paidAmount.map { String($0) } ?? "nil"
+                    let balance = expense.balanceAmount.map { String($0) } ?? "nil"
+                    let status = expense.status ?? "nil"
+                    print("[Settlement] expense entry")
+                    print("  userId:", userId)
+                    print("  nickname:", nickname)
+                    print("  paid:", paid)
+                    print("  balance:", balance)
+                    print("  status:", status)
+                }
+            }
+
+            if let transfers = response.transfers {
+                for transfer in transfers {
+                    let fromName = transfer.fromNickname ?? "nil"
+                    let toName = transfer.toNickname ?? "nil"
+                    let amount = transfer.amount.map { String($0) } ?? "nil"
+                    print("[Settlement] transfer entry")
+                    print("  from:", fromName)
+                    print("  to:", toName)
+                    print("  amount:", amount)
+                }
+            }
+
+            settlement = response
+            loadError = nil
+            if let myExpense = response.expenses?.first(where: { $0.userId == userSession.kakaoUserId }) {
+                myAmountText = formatAmount(Int((myExpense.paidAmount ?? 0).rounded()))
+            }
+
+        case let .failure(error):
+            print("[Settlement] loadSettlement error:", error.localizedDescription)
+            settlement = nil
+            loadError = error.localizedDescription
+        }
+    }
+
+    @MainActor
     private func loadSettlement() async {
         guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
             loadError = "로그인이 필요합니다."
@@ -301,25 +355,14 @@ struct SettlementView: View {
         isLoading = true
         loadError = nil
 
-        await withCheckedContinuation { continuation in
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             PromiseAPIClient.shared.getSettlement(
                 promiseId: promiseId,
                 accessToken: accessToken,
                 tokenType: userSession.backendTokenType ?? "Bearer"
             ) { result in
-                DispatchQueue.main.async {
-                    isLoading = false
-                    switch result {
-                    case let .success(response):
-                        settlement = response
-                        loadError = nil
-                        if let myExpense = response.expenses?.first(where: { $0.userId == userSession.kakaoUserId }) {
-                            myAmountText = formatAmount(Int((myExpense.paidAmount ?? 0).rounded()))
-                        }
-                    case let .failure(error):
-                        settlement = nil
-                        loadError = error.localizedDescription
-                    }
+                Task { @MainActor in
+                    handleLoadSettlementResult(result)
                     continuation.resume()
                 }
             }

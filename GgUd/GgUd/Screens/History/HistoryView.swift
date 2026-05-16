@@ -161,11 +161,7 @@ struct HistoryView: View {
                     switch result {
                     case let .success(promises):
                         items = promises
-                            .filter { promise in
-                                let status = (promise.status ?? "").uppercased()
-                                return status != "CANCELED" && status != "CANCELLED"
-                            }
-                            .map(HistoryItem.init)
+                            .compactMap(HistoryItem.init)
                         loadError = nil
                     case .failure:
                         items = []
@@ -289,7 +285,18 @@ private struct SearchIconShape: Shape {
 }
 
 private extension HistoryItem {
-    init(_ promise: BackendPromise) {
+    init?(_ promise: BackendPromise) {
+        let rawStatus = (promise.status ?? "").uppercased()
+        let historyStatus: HistoryStatus
+        switch rawStatus {
+        case "COMPLETED", "DONE", "FINISHED", "PROMISE_COMPLETED":
+            historyStatus = .done
+        case "CANCELED", "CANCELLED":
+            historyStatus = .canceled
+        default:
+            return nil
+        }
+
         self.init(
             promiseId: promise.id ?? 0,
             title: promise.title ?? "제목 없음",
@@ -297,7 +304,7 @@ private extension HistoryItem {
             timeText: HistoryDateFormatter.timeText(from: promise.promiseDateTime),
             memberCount: max(1, Int(promise.participantCount ?? 1)),
             location: promise.confirmedPlaceName ?? "장소 미정",
-            status: .done,
+            status: historyStatus,
             hostId: promise.hostId
         )
     }
