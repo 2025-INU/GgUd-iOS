@@ -86,10 +86,6 @@ struct MyPageView: View {
                 ProfileEditView()
             }
             divider
-            menuRow(systemImage: "bell.fill", title: "알림 설정") {
-                NotificationSettingsView()
-            }
-            divider
             buttonRow(systemImage: "rectangle.portrait.and.arrow.right", title: "로그아웃") {
                 performLogout()
             }
