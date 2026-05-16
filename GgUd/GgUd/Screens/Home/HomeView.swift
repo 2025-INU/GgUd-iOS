@@ -13,6 +13,8 @@ struct HomeView: View {
     @State private var isLoading = false
     @State private var loadError: String?
     @State private var showJoinSheet = false
+    @State private var showPromiseActionPopup = false
+    @State private var navigateToCreateAppointment = false
     @State private var inviteCodeInput = ""
     @State private var isJoiningWithCode = false
     @State private var isLoadingInvitePreview = false
@@ -39,29 +41,6 @@ struct HomeView: View {
                         HomeSegmentedSwitch(selected: $selectedSegment)
                             .padding(.top, 12)
                             .padding(.horizontal, 24)
-
-                        HStack {
-                            Spacer()
-
-                            Button {
-                                showJoinSheet = true
-                            } label: {
-                                Text("초대 코드로 참여")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(AppColors.primary)
-                                    .padding(.horizontal, 14)
-                                    .frame(height: 36)
-                                    .background(Color.white)
-                                    .clipShape(Capsule())
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(AppColors.border, lineWidth: 1)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.top, 14)
-                        .padding(.horizontal, 24)
 
                         if isLoading {
                             ProgressView()
@@ -164,8 +143,8 @@ struct HomeView: View {
             Text(completionAlertMessage ?? "")
         }
         .overlay(alignment: .bottomTrailing) {
-            NavigationLink {
-                CreateAppointmentView()
+            Button {
+                showPromiseActionPopup = true
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 28, weight: .regular))
@@ -184,6 +163,27 @@ struct HomeView: View {
             .buttonStyle(.plain)
             .padding(.trailing, 28)
             .padding(.bottom, 108)
+        }
+        .overlay {
+            if showPromiseActionPopup {
+                PromiseActionPopup(
+                    onJoin: {
+                        showPromiseActionPopup = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            showJoinSheet = true
+                        }
+                    },
+                    onCreate: {
+                        showPromiseActionPopup = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            navigateToCreateAppointment = true
+                        }
+                    },
+                    onDismiss: {
+                        showPromiseActionPopup = false
+                    }
+                )
+            }
         }
         .task(id: userSession.backendAccessToken) {
             await loadPromises()
@@ -222,6 +222,14 @@ struct HomeView: View {
         }
         .background {
             ZStack {
+                NavigationLink(
+                    destination: CreateAppointmentView(),
+                    isActive: $navigateToCreateAppointment
+                ) {
+                    EmptyView()
+                }
+                .hidden()
+
                 NavigationLink(
                     destination: Group {
                         if let promiseId = presentedWaitingRoomPromiseId ?? joinedPromiseId {
@@ -649,6 +657,62 @@ struct HomeView: View {
         default:
             return "약속을 종료하지 못했어요. 잠시 후 다시 시도해주세요."
         }
+    }
+}
+
+private struct PromiseActionPopup: View {
+    let onJoin: () -> Void
+    let onCreate: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onDismiss)
+
+            VStack(spacing: 0) {
+                Text("약속")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(Color(hex: "#111827"))
+                    .padding(.top, 28)
+
+                Text("원하시는 기능을 선택해주세요.")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Color(hex: "#6B7280"))
+                    .padding(.top, 10)
+
+                HStack(spacing: 12) {
+                    popupButton(title: "약속 참여", action: onJoin)
+                    popupButton(title: "약속 생성", action: onCreate)
+                }
+                .padding(.top, 28)
+                .padding(.bottom, 28)
+                .padding(.horizontal, 24)
+            }
+            .frame(maxWidth: 327)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .shadow(color: Color.black.opacity(0.16), radius: 20, x: 0, y: 12)
+            .padding(.horizontal, 24)
+        }
+    }
+
+    private func popupButton(title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(Color(hex: "#2563EB"))
+                .frame(maxWidth: .infinity)
+                .frame(height: 54)
+                .background(Color(hex: "#EFF6FF"))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color(hex: "#BFDBFE"), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 }
 
