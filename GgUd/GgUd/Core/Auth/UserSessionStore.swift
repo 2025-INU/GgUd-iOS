@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 final class UserSessionStore: ObservableObject {
     private enum Keys {
@@ -16,6 +17,7 @@ final class UserSessionStore: ObservableObject {
     @Published var kakaoUserId: Int64?
     @Published var nickname: String = ""
     @Published var profileImageURL: String?
+    @Published var profileImageData: Data?
     @Published var backendAccessToken: String?
     @Published var backendRefreshToken: String?
     @Published var backendTokenType: String?
@@ -29,6 +31,7 @@ final class UserSessionStore: ObservableObject {
         kakaoUserId = storedUserId?.int64Value
         nickname = defaults.string(forKey: Keys.nickname) ?? ""
         profileImageURL = defaults.string(forKey: Keys.profileImageURL)
+        profileImageData = nil
         backendAccessToken = defaults.string(forKey: Keys.backendAccessToken)
         backendRefreshToken = defaults.string(forKey: Keys.backendRefreshToken)
         backendTokenType = defaults.string(forKey: Keys.backendTokenType)
@@ -49,6 +52,7 @@ final class UserSessionStore: ObservableObject {
         self.kakaoUserId = kakaoUserId
         self.nickname = nickname
         self.profileImageURL = profileImageURL
+        self.profileImageData = nil
         self.backendAccessToken = backendAccessToken
         self.backendRefreshToken = backendRefreshToken
         self.backendTokenType = backendTokenType
@@ -115,6 +119,10 @@ final class UserSessionStore: ObservableObject {
         }
     }
 
+    func setProfilePreviewImageData(_ data: Data?) {
+        profileImageData = data
+    }
+
     func updateBackendTokens(accessToken: String?, tokenType: String?, expiresIn: Int64?) {
         backendAccessToken = accessToken
         backendTokenType = tokenType
@@ -146,6 +154,7 @@ final class UserSessionStore: ObservableObject {
         kakaoUserId = nil
         nickname = ""
         profileImageURL = nil
+        profileImageData = nil
         backendAccessToken = nil
         backendRefreshToken = nil
         backendTokenType = nil

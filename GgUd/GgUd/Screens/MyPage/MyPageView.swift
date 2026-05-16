@@ -57,24 +57,12 @@ struct MyPageView: View {
     private var profileRow: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
-                if let profileImageURL = userSession.profileImageURL,
-                   let url = URL(string: profileImageURL) {
-                    AsyncImage(url: url) { image in
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    } placeholder: {
-                        Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 64))
-                            .foregroundStyle(Color(hex: "#D1D5DB"))
-                    }
-                    .frame(width: 64, height: 64)
-                    .clipShape(Circle())
-                } else {
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 64))
-                        .foregroundStyle(Color(hex: "#D1D5DB"))
-                }
+                ProfileAvatarView(
+                    profileImageURL: userSession.profileImageURL,
+                    profileImageData: userSession.profileImageData,
+                    size: 64,
+                    placeholderSystemImage: "person.crop.circle.fill"
+                )
 
                 Text(displayName)
                     .font(.system(size: 20, weight: .semibold))
@@ -218,6 +206,62 @@ struct MyPageView: View {
         }
     }
 }
+
+private struct ProfileAvatarView: View {
+    let profileImageURL: String?
+    let profileImageData: Data?
+    let size: CGFloat
+    let placeholderSystemImage: String
+
+    var body: some View {
+        if let profileImageData,
+           let image = UIImage(data: profileImageData) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+        } else if let profileImageURL,
+                  let rawURL = URL(string: profileImageURL) {
+            let bustedURL = cacheBustedURL(from: rawURL)
+            AsyncImage(url: bustedURL) { phase in
+                switch phase {
+                case let .success(image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                case let .failure(error):
+                    let _ = print("[ProfileAvatar] image load failed:", error.localizedDescription)
+                    placeholder
+                case .empty:
+                    placeholder
+                @unknown default:
+                    placeholder
+                }
+            }
+            .id(profileImageURL)
+            .frame(width: size, height: size)
+            .clipShape(Circle())
+        } else {
+            placeholder
+        }
+    }
+
+    private var placeholder: some View {
+        Image(systemName: placeholderSystemImage)
+            .font(.system(size: size))
+            .foregroundStyle(Color(hex: "#D1D5DB"))
+    }
+
+    private func cacheBustedURL(from url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        var queryItems = components.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "t", value: String(Int(Date().timeIntervalSince1970))))
+        components.queryItems = queryItems
+        return components.url ?? url
+    }
+}
+
 
 #Preview {
     NavigationStack {

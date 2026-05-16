@@ -123,6 +123,7 @@ struct ProfileEditView: View {
                             nickname: user.nickname ?? trimmedName,
                             profileImageURL: user.profileImageUrl
                         )
+                        userSession.setProfilePreviewImageData(selectedImageData)
                         dismiss()
                     case let .failure(error):
                         print("[ProfileEdit] updateMyProfile error:", error.localizedDescription)
@@ -145,18 +146,26 @@ struct ProfileEditView: View {
             return
         }
 
-        let mimeType = imageMimeType(for: selectedImageData)
-        let fileExtension = fileExtension(for: mimeType)
+        guard let normalizedUpload = normalizedUploadImage(from: selectedImageData) else {
+            print("[ProfileEdit] failed to normalize image for upload")
+            isSaving = false
+            alertMessage = "이미지를 업로드용 형식으로 변환하지 못했어요. 다른 사진으로 다시 시도해주세요."
+            showAlert = true
+            return
+        }
+
+        let mimeType = normalizedUpload.mimeType
+        let fileExtension = normalizedUpload.fileExtension
         let fileName = "profile.\(fileExtension)"
 
         print("[ProfileEdit] uploadProfileImage start")
         print("[ProfileEdit] image mimeType:", mimeType)
-        print("[ProfileEdit] image bytes:", selectedImageData.count)
+        print("[ProfileEdit] image bytes:", normalizedUpload.data.count)
 
         AuthAPIClient.shared.uploadProfileImage(
             accessToken: accessToken,
             tokenType: tokenType,
-            imageData: selectedImageData,
+            imageData: normalizedUpload.data,
             mimeType: mimeType,
             fileName: fileName
         ) { result in
@@ -180,31 +189,25 @@ struct ProfileEditView: View {
     private func loadSelectedPhoto(from item: PhotosPickerItem) async {
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else { return }
-            selectedImageData = data
-            selectedUIImage = UIImage(data: data)
+            guard let image = UIImage(data: data) else {
+                alertMessage = "선택한 이미지를 불러오지 못했습니다."
+                showAlert = true
+                return
+            }
+            selectedUIImage = image
+            selectedImageData = image.jpegData(compressionQuality: 0.88)
         } catch {
             alertMessage = "선택한 이미지를 불러오지 못했습니다."
             showAlert = true
         }
     }
 
-    private func imageMimeType(for data: Data) -> String {
-        let bytes = [UInt8](data.prefix(1))
-        guard let first = bytes.first else { return "image/jpeg" }
-
-        switch first {
-        case 0x89: return "image/png"
-        case 0x47: return "image/gif"
-        default: return "image/jpeg"
+    private func normalizedUploadImage(from data: Data) -> (data: Data, mimeType: String, fileExtension: String)? {
+        if let image = UIImage(data: data), let jpegData = image.jpegData(compressionQuality: 0.88) {
+            return (jpegData, "image/jpeg", "jpg")
         }
-    }
 
-    private func fileExtension(for mimeType: String) -> String {
-        switch mimeType {
-        case "image/png": return "png"
-        case "image/gif": return "gif"
-        default: return "jpg"
-        }
+        return nil
     }
 }
 
