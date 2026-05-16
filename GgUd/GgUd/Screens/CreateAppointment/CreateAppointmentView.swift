@@ -277,6 +277,8 @@ struct CreateAppointmentView: View {
                     .datePickerStyle(.graphical)
                     .labelsHidden()
                     .environment(\.locale, Locale(identifier: "ko_KR"))
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 360)
             }
         }
         .sheet(isPresented: $showTimeDialog) {
@@ -296,6 +298,9 @@ struct CreateAppointmentView: View {
                     .datePickerStyle(.wheel)
                     .labelsHidden()
                     .environment(\.locale, Locale(identifier: "ko_KR"))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 220)
+                    .clipped()
             }
         }
         .alert("약속 만들기", isPresented: $showAlert) {
@@ -514,24 +519,41 @@ private struct SelectionSheet<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                content
-                    .padding()
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(Color(hex: "#D1D5DB"))
+                .frame(width: 56, height: 6)
+                .padding(.top, 8)
+
+            HStack {
+                Button("취소", action: onCancel)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color(hex: "#111827"))
+
                 Spacer()
+
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color(hex: "#111827"))
+
+                Spacer()
+
+                Button("확인", action: onConfirm)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color(hex: "#2563EB"))
             }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("취소", action: onCancel)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("확인", action: onConfirm)
-                }
-            }
-            .background(Color.white)
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
+
+            content
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color.white)
         .presentationDetents([.medium, .large])
     }
 }
