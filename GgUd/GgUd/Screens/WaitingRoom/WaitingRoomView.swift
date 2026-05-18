@@ -26,6 +26,8 @@ struct WaitingRoomView: View {
     @State private var cachedInviteCode: String?
     @State private var sharePayload: SharePayload?
     @State private var inviteAlertMessage: String?
+    @State private var currentUserLocationSubmitted: Bool = false
+    @State private var currentUserIsHost: Bool = false
     @StateObject private var promiseRealtime = PromiseRealtimeManager()
 
     
@@ -203,10 +205,19 @@ struct WaitingRoomView: View {
     }
 
     private var shouldShowMidpointCTA: Bool {
-        guard !members.isEmpty, allMembersDone else { return false }
+        guard !members.isEmpty else { return false }
+
+        let canEnterMonitoringStage: Bool = {
+            if currentUserIsHost {
+                return allMembersDone
+            }
+            return currentUserLocationSubmitted
+        }()
+
+        guard canEnterMonitoringStage else { return false }
 
         switch normalizedPromiseStatus {
-        case "", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING", "SELECTING_MIDPOINT":
+        case "", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING", "SELECTING_MIDPOINT", "MIDPOINT_CONFIRMED":
             return true
         default:
             return false
@@ -317,8 +328,14 @@ struct WaitingRoomView: View {
 
         switch participantsResultValue {
         case let .success(participants):
+            currentUserLocationSubmitted = false
+            currentUserIsHost = false
             members = participants.map { participant in
                 let isMe = participant.userId == userSession.kakaoUserId
+                if isMe {
+                    currentUserLocationSubmitted = participant.locationSubmitted == true
+                    currentUserIsHost = participant.host == true
+                }
                 return WaitingMember(
                     name: (participant.nickname ?? "사용자") + (isMe ? " (나)" : ""),
                     statusText: participant.locationSubmitted == true ? "위치 입력 완료" : "위치 입력 대기중",
@@ -328,6 +345,8 @@ struct WaitingRoomView: View {
             print("[WaitingRoom] participants count:", participants.count)
             print("[WaitingRoom] members count:", members.count)
             print("[WaitingRoom] allMembersDone:", allMembersDone)
+            print("[WaitingRoom] currentUserLocationSubmitted:", currentUserLocationSubmitted)
+            print("[WaitingRoom] currentUserIsHost:", currentUserIsHost)
         case let .failure(error):
             print("[WaitingRoom] participants error:", error.localizedDescription)
             loadError = error.localizedDescription

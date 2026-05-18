@@ -52,6 +52,7 @@ struct MidpointView: View {
     @GestureState private var dragOffset: CGFloat = 0
     @State private var shouldDrawMap: Bool = false
     @StateObject private var locationManager = MidpointLocationManager()
+    @StateObject private var promiseRealtime = PromiseRealtimeManager()
     @State private var mapCenterCoordinate: CLLocationCoordinate2D?
     @State private var isLoading = false
     @State private var loadError: String?
@@ -64,6 +65,9 @@ struct MidpointView: View {
     @State private var isShowingAIModal = false
     @State private var aiPromptText = ""
     @State private var selectedAIQuery: String?
+    @State private var currentPromiseStatus: String = ""
+    @State private var isCurrentUserHost: Bool = false
+    @State private var statusPollingTask: Task<Void, Never>?
 
     @State private var participants: [MarkerItem] = []
     @State private var recommendations: [PlaceItem] = []
@@ -137,9 +141,17 @@ struct MidpointView: View {
         .task(id: promiseId) {
             prepareMapLifecycle()
             await loadMidpointData()
+            connectStatusSocketIfPossible()
+            restartStatusPollingIfNeeded()
         }
         .onDisappear {
             tearDownMapLifecycle()
+            statusPollingTask?.cancel()
+            statusPollingTask = nil
+            promiseRealtime.disconnect()
+        }
+        .onReceive(promiseRealtime.$latestStatusEvent.compactMap { $0 }) { event in
+            Task { await handleStatusEvent(event) }
         }
         .alert("중간지점", isPresented: $isShowingActionAlert) {
             Button("확인", role: .cancel) { }
@@ -543,6 +555,14 @@ struct MidpointView: View {
             .padding(.trailing, 24)
             .padding(.bottom, 20)
 
+            if stage == .midpoint, !isCurrentUserHost, currentPromiseStatus == "MIDPOINT_CONFIRMED" {
+                Text("호스트가 선택한 중간지점을 확인할 수 있어요")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(AppColors.primary)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 12)
+            }
+
             Group {
                 if isLoading {
                     loadingContent
@@ -571,9 +591,10 @@ struct MidpointView: View {
         ScrollView(showsIndicators: false) {
             LazyVStack(spacing: 12) {
                 if recommendations.isEmpty {
-                    Text("추천된 중간지점이 아직 없습니다")
+                    Text(midpointEmptyStateText)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(AppColors.subText)
+                        .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 24)
                 } else {
@@ -619,6 +640,14 @@ struct MidpointView: View {
         .frame(minHeight: stage == .finalPlace ? 320 : 220)
     }
 
+    private var midpointEmptyStateText: String {
+        let waitingStatuses: Set<String> = ["", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING"]
+        if !isCurrentUserHost && waitingStatuses.contains(currentPromiseStatus) {
+            return "호스트가 아직 중간지점을 선택하지 않았어요\n호스트가 중간지점을 선택하면 결과가 자동으로 표시돼요"
+        }
+        return "추천된 중간지점이 아직 없습니다"
+    }
+
     private func midpointCard(_ item: PlaceItem) -> some View {
         Button(action: {
             Task { await confirmRecommendedMidpoint(item) }
@@ -656,8 +685,8 @@ struct MidpointView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isSubmittingSelection || item.stationId == nil)
-        .opacity((isSubmittingSelection || item.stationId == nil) ? 0.65 : 1)
+        .disabled(isSubmittingSelection || item.stationId == nil || !isCurrentUserHost)
+        .opacity((isSubmittingSelection || item.stationId == nil || !isCurrentUserHost) ? 0.65 : 1)
     }
 
     private func finalPlaceCard(_ item: FinalPlaceItem) -> some View {
@@ -791,6 +820,8 @@ private struct MarkerItem: Identifiable {
     let icon: String
     let color: Color
     let coordinate: CLLocationCoordinate2D?
+    let profileImageURL: String?
+    let profileImageData: Data?
 }
 
 private struct PlaceItem: Identifiable {
@@ -865,7 +896,10 @@ private struct SimulatorMidpointMapView: UIViewRepresentable {
                 title: item.title,
                 coordinate: coordinate,
                 tintColor: UIColor(item.color),
-                glyphSystemImage: "person.fill"
+                glyphSystemImage: "person.fill",
+                profileImageURL: item.profileImageURL,
+                profileImageData: item.profileImageData,
+                kind: .participant
             )
         }
     }
@@ -877,7 +911,10 @@ private struct SimulatorMidpointMapView: UIViewRepresentable {
                 title: item.title,
                 coordinate: coordinate,
                 tintColor: UIColor(red: 0.22, green: 0.62, blue: 0.96, alpha: 1),
-                glyphSystemImage: "mappin"
+                glyphSystemImage: "mappin.circle.fill",
+                profileImageURL: nil,
+                profileImageData: nil,
+                kind: .recommendation
             )
         }
     }
@@ -887,34 +924,146 @@ private struct SimulatorMidpointMapView: UIViewRepresentable {
             guard let annotation = annotation as? SimulatorAnnotation else { return nil }
 
             let identifier = "SimulatorAnnotationView"
-            let view: MKMarkerAnnotationView
-            if let reused = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView {
-                view = reused
-            } else {
-                view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+            let view = (mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MidpointAvatarAnnotationView) ?? MidpointAvatarAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+            view.annotation = annotation
+            view.canShowCallout = false
+
+            switch annotation.kind {
+            case .participant:
+                view.image = nil
+                view.avatarImageView.isHidden = false
+                view.configure(
+                    profileImageURL: annotation.profileImageURL,
+                    profileImageData: annotation.profileImageData,
+                    tint: annotation.tintColor
+                )
+                view.centerOffset = CGPoint(x: 0, y: -4)
+            case .recommendation:
+                view.avatarImageView.isHidden = true
+                view.image = midpointPinImage(tint: annotation.tintColor, symbolName: annotation.glyphSystemImage, size: 44, symbolSize: 18)
+                view.centerOffset = CGPoint(x: 0, y: -4)
             }
 
-            view.annotation = annotation
-            view.markerTintColor = annotation.tintColor
-            view.glyphImage = UIImage(systemName: annotation.glyphSystemImage)
-            view.glyphTintColor = .white
-            view.canShowCallout = false
             return view
+        }
+
+        private func midpointPinImage(tint: UIColor, symbolName: String, size: CGFloat, symbolSize: CGFloat) -> UIImage? {
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+            return renderer.image { _ in
+                let rect = CGRect(origin: .zero, size: CGSize(width: size, height: size))
+                tint.setFill()
+                UIBezierPath(ovalIn: rect).fill()
+
+                let symbolConfig = UIImage.SymbolConfiguration(pointSize: symbolSize, weight: .bold)
+                let symbol = UIImage(systemName: symbolName, withConfiguration: symbolConfig)?.withTintColor(.white, renderingMode: .alwaysOriginal)
+                let symbolRect = CGRect(x: (size - symbolSize) / 2, y: (size - symbolSize) / 2, width: symbolSize, height: symbolSize)
+                symbol?.draw(in: symbolRect)
+            }
         }
     }
 }
 
 private final class SimulatorAnnotation: NSObject, MKAnnotation {
+    enum Kind {
+        case participant
+        case recommendation
+    }
+
     let title: String?
     let coordinate: CLLocationCoordinate2D
     let tintColor: UIColor
     let glyphSystemImage: String
+    let profileImageURL: String?
+    let profileImageData: Data?
+    let kind: Kind
 
-    init(title: String, coordinate: CLLocationCoordinate2D, tintColor: UIColor, glyphSystemImage: String) {
+    init(title: String, coordinate: CLLocationCoordinate2D, tintColor: UIColor, glyphSystemImage: String, profileImageURL: String?, profileImageData: Data?, kind: Kind) {
         self.title = title
         self.coordinate = coordinate
         self.tintColor = tintColor
         self.glyphSystemImage = glyphSystemImage
+        self.profileImageURL = profileImageURL
+        self.profileImageData = profileImageData
+        self.kind = kind
+    }
+}
+
+private final class MidpointAvatarAnnotationView: MKAnnotationView {
+    let avatarImageView = UIImageView()
+    private var imageTask: URLSessionDataTask?
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        imageTask?.cancel()
+        avatarImageView.image = nil
+        avatarImageView.backgroundColor = .systemBlue
+    }
+
+    func configure(profileImageURL: String?, profileImageData: Data?, tint: UIColor) {
+        imageTask?.cancel()
+        avatarImageView.backgroundColor = tint
+
+        if let profileImageData, let image = UIImage(data: profileImageData) {
+            avatarImageView.image = image
+            return
+        }
+
+        guard let profileImageURL, let url = URL(string: profileImageURL) else {
+            avatarImageView.image = Self.placeholderImage()
+            return
+        }
+
+        avatarImageView.image = Self.placeholderImage()
+        imageTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let self, let data, let image = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                self.avatarImageView.image = image
+            }
+        }
+        imageTask?.resume()
+    }
+
+    private func setup() {
+        frame = CGRect(x: 0, y: 0, width: 50, height: 50)
+        centerOffset = CGPoint(x: 0, y: -4)
+
+        avatarImageView.frame = bounds
+        avatarImageView.contentMode = .scaleAspectFill
+        avatarImageView.clipsToBounds = true
+        avatarImageView.layer.cornerRadius = bounds.width / 2
+        avatarImageView.layer.borderWidth = 3
+        avatarImageView.layer.borderColor = UIColor.white.cgColor
+        avatarImageView.layer.shadowColor = UIColor.black.withAlphaComponent(0.16).cgColor
+        avatarImageView.layer.shadowOpacity = 1
+        avatarImageView.layer.shadowRadius = 8
+        avatarImageView.layer.shadowOffset = CGSize(width: 0, height: 4)
+        avatarImageView.backgroundColor = .systemBlue
+        avatarImageView.image = Self.placeholderImage()
+        addSubview(avatarImageView)
+    }
+
+    private static func placeholderImage() -> UIImage? {
+        let size = CGSize(width: 50, height: 50)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            UIColor.systemBlue.setFill()
+            UIBezierPath(ovalIn: CGRect(origin: .zero, size: size)).fill()
+
+            let symbolConfig = UIImage.SymbolConfiguration(pointSize: 18, weight: .bold)
+            let symbol = UIImage(systemName: "person.fill", withConfiguration: symbolConfig)?
+                .withTintColor(.white, renderingMode: .alwaysOriginal)
+            symbol?.draw(in: CGRect(x: 16, y: 14, width: 18, height: 18))
+        }
     }
 }
 
@@ -973,8 +1122,56 @@ private extension MidpointView {
                 return ""
             }
         }()
+        currentPromiseStatus = normalizedStatus
+
+        let participantsResult: Result<[PromiseParticipantResponse], Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getParticipants(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch participantsResult {
+        case let .success(serverParticipants):
+            let palette: [Color] = [
+                Color(red: 0.97, green: 0.36, blue: 0.35),
+                Color(red: 0.23, green: 0.52, blue: 0.98),
+                Color(red: 0.21, green: 0.78, blue: 0.43),
+                Color(red: 0.65, green: 0.44, blue: 0.96),
+                Color(red: 0.95, green: 0.68, blue: 0.08)
+            ]
+
+            isCurrentUserHost = serverParticipants.contains { participant in
+                participant.userId == userSession.kakaoUserId && (participant.host ?? false)
+            }
+
+            participants = serverParticipants.enumerated().compactMap { index, participant in
+                guard let lat = participant.departureLatitude,
+                      let lon = participant.departureLongitude else { return nil }
+
+                let resolvedUserId = participant.userId
+                return MarkerItem(
+                    title: participant.nickname ?? "사용자",
+                    icon: "person.fill",
+                    color: palette[index % palette.count],
+                    coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                    profileImageURL: participant.profileImageUrl,
+                    profileImageData: resolvedUserId == userSession.kakaoUserId ? userSession.profileImageData : nil
+                )
+            }
+        case let .failure(error):
+            loadError = error.localizedDescription
+            participants = []
+            isCurrentUserHost = false
+        }
+
+        restartStatusPollingIfNeeded()
 
         let shouldStartSelection: Bool = {
+            guard isCurrentUserHost else { return false }
             switch normalizedStatus {
             case "", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING":
                 return true
@@ -996,38 +1193,17 @@ private extension MidpointView {
 
             switch startSelectionResult {
             case .success:
-                break
+                currentPromiseStatus = "SELECTING_MIDPOINT"
             case let .failure(error):
                 loadError = error.localizedDescription
                 isLoading = false
                 return
             }
         } else {
-            print("[Midpoint] skip startMidpointSelection for status: \(normalizedStatus)")
+            print("[Midpoint] skip startMidpointSelection for status: \(normalizedStatus), isHost: \(isCurrentUserHost)")
         }
 
-        async let participantsResult: Result<[PromiseParticipantResponse], Error> = withCheckedContinuation { continuation in
-            PromiseAPIClient.shared.getParticipants(
-                promiseId: promiseId,
-                accessToken: accessToken,
-                tokenType: tokenType
-            ) { result in
-                continuation.resume(returning: result)
-            }
-        }
-
-        async let recommendationsResult: Result<MidpointRecommendationResponse, Error> = withCheckedContinuation { continuation in
-            PromiseAPIClient.shared.getMidpointRecommendations(
-                promiseId: promiseId,
-                accessToken: accessToken,
-                tokenType: tokenType
-            ) { result in
-                continuation.resume(returning: result)
-            }
-        }
-
-
-        async let mapDataResult: Result<PromiseMapDataResponse, Error> = withCheckedContinuation { continuation in
+        let mapDataResult: Result<PromiseMapDataResponse, Error> = await withCheckedContinuation { continuation in
             PromiseAPIClient.shared.getMapData(
                 promiseId: promiseId,
                 accessToken: accessToken,
@@ -1037,39 +1213,45 @@ private extension MidpointView {
             }
         }
 
-        let (participantsValue, recommendationsValue, mapDataValue) = await (participantsResult, recommendationsResult, mapDataResult)
-
-        switch participantsValue {
-        case let .success(serverParticipants):
-            let palette: [Color] = [
-                Color(red: 0.97, green: 0.36, blue: 0.35),
-                Color(red: 0.23, green: 0.52, blue: 0.98),
-                Color(red: 0.21, green: 0.78, blue: 0.43),
-                Color(red: 0.65, green: 0.44, blue: 0.96),
-                Color(red: 0.95, green: 0.68, blue: 0.08)
-            ]
-
-            participants = serverParticipants.enumerated().compactMap { index, participant in
-                guard let lat = participant.departureLatitude,
-                      let lon = participant.departureLongitude else { return nil }
-
-                return MarkerItem(
-                    title: participant.nickname ?? "사용자",
-                    icon: "person.fill",
-                    color: palette[index % palette.count],
-                    coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
-                )
-            }
-        case let .failure(error):
-            loadError = error.localizedDescription
-            participants = []
-        }
-
-        switch mapDataValue {
+        var latestMapData: PromiseMapDataResponse?
+        switch mapDataResult {
         case let .success(mapData):
+            latestMapData = mapData
             applyMapData(mapData)
         case .failure:
             break
+        }
+
+        let guestWaitingStatuses: Set<String> = ["", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING"]
+        if !isCurrentUserHost && guestWaitingStatuses.contains(normalizedStatus) {
+            recommendations = []
+            loadError = nil
+            isLoading = false
+            return
+        }
+
+        let recommendationsValue: Result<MidpointRecommendationResponse, Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getMidpointRecommendations(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        if normalizedStatus == "MIDPOINT_CONFIRMED" {
+            selectedMidpointTitle = latestMapData?.recommendedMidpoints?.first?.name
+            isLoading = false
+            await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: selectedAIQuery)
+            return
+        }
+
+        if normalizedStatus == "PLACE_CONFIRMED" {
+            selectedMidpointTitle = latestMapData?.recommendedMidpoints?.first?.name
+            isLoading = false
+            await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: selectedAIQuery)
+            return
         }
 
         switch recommendationsValue {
@@ -1162,6 +1344,112 @@ private extension MidpointView {
 
         if case let .success(mapData) = result {
             applyMapData(mapData)
+        }
+    }
+
+    private func connectStatusSocketIfPossible() {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else { return }
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+        promiseRealtime.connect(
+            promiseId: promiseId,
+            accessToken: accessToken,
+            tokenType: tokenType,
+            subscriptions: [.status]
+        )
+    }
+
+    private func restartStatusPollingIfNeeded() {
+        statusPollingTask?.cancel()
+        statusPollingTask = nil
+
+        guard !isCurrentUserHost else { return }
+
+        let pollingStatuses: Set<String> = [
+            "",
+            "CREATED",
+            "RECRUITING",
+            "WAITING",
+            "WAITING_ROOM",
+            "WAITING_FOR_PARTICIPANTS",
+            "READY",
+            "LOCATION_COLLECTING",
+            "SELECTING_MIDPOINT",
+            "MIDPOINT_CONFIRMED"
+        ]
+
+        guard pollingStatuses.contains(currentPromiseStatus) else { return }
+
+        statusPollingTask = Task {
+            var lastObservedStatus = await MainActor.run { currentPromiseStatus }
+
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { break }
+
+                guard let nextStatus = await fetchCurrentPromiseStatus() else { continue }
+                guard nextStatus != lastObservedStatus else { continue }
+
+                lastObservedStatus = nextStatus
+
+                await MainActor.run {
+                    currentPromiseStatus = nextStatus
+                    print("[MidpointPolling] detected status change:", nextStatus)
+                }
+
+                await loadMidpointData()
+
+                if nextStatus == "PLACE_CONFIRMED" {
+                    break
+                }
+            }
+        }
+    }
+
+    private func fetchCurrentPromiseStatus() async -> String? {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else { return nil }
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+
+        let result: Result<PromiseStatusResponse, Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getPromiseStatus(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch result {
+        case let .success(response):
+            return (response.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        case let .failure(error):
+            print("[MidpointPolling] getPromiseStatus error:", error.localizedDescription)
+            return nil
+        }
+    }
+
+    @MainActor
+    private func handleStatusEvent(_ event: PromiseStatusSocketEvent) async {
+        print("[MidpointRealtime] received status type:", event.type)
+        if let newStatus = event.payload?.newStatus {
+            currentPromiseStatus = newStatus.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        }
+
+        restartStatusPollingIfNeeded()
+
+        switch event.type {
+        case "ALL_LOCATIONS_SUBMITTED":
+            await loadMidpointData()
+        case "MIDPOINT_CONFIRMED":
+            await loadMidpointData()
+        case "PLACE_CONFIRMED":
+            NotificationCenter.default.post(name: Notification.Name("closeWaitingRoomFlow"), object: nil)
+            NotificationCenter.default.post(name: Notification.Name("waitingRoomShouldReturnHome"), object: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                dismiss()
+            }
+        default:
+            break
         }
     }
 
@@ -1666,7 +1954,7 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
             guard !registeredStyleIDs.contains(styleID) else { return }
 
             let iconStyle = PoiIconStyle(
-                symbol: makeMarkerImage(fill: UIColor(item.color), systemName: item.icon),
+                symbol: makeParticipantMarkerImage(item: item),
                 anchorPoint: CGPoint(x: 0.5, y: 1.0)
             )
             let textStyle = TextStyle(
@@ -1691,9 +1979,11 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
             guard !registeredStyleIDs.contains(recommendationStyleID) else { return }
 
             let iconStyle = PoiIconStyle(
-                symbol: makeMarkerImage(
+                symbol: makeCircularSymbolImage(
                     fill: UIColor(red: 0.22, green: 0.62, blue: 0.96, alpha: 1),
-                    systemName: "mappin"
+                    systemName: "mappin.circle.fill",
+                    size: CGSize(width: 44, height: 44),
+                    symbolPointSize: 18
                 ),
                 anchorPoint: CGPoint(x: 0.5, y: 1.0)
             )
@@ -1702,10 +1992,35 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
             registeredStyleIDs.insert(recommendationStyleID)
         }
 
-        private func makeMarkerImage(fill: UIColor, systemName: String) -> UIImage? {
-            let size = CGSize(width: 30, height: 30)
-            let renderer = UIGraphicsImageRenderer(size: size)
+        private func makeParticipantMarkerImage(item: MarkerItem) -> UIImage? {
+            if let data = item.profileImageData, let image = UIImage(data: data) {
+                return circularAvatarImage(from: image, tint: UIColor(item.color))
+            }
+            return makeCircularSymbolImage(
+                fill: UIColor(item.color),
+                systemName: item.icon,
+                size: CGSize(width: 50, height: 50),
+                symbolPointSize: 18
+            )
+        }
 
+        private func circularAvatarImage(from image: UIImage, tint: UIColor) -> UIImage? {
+            let size = CGSize(width: 50, height: 50)
+            let renderer = UIGraphicsImageRenderer(size: size)
+            return renderer.image { _ in
+                let rect = CGRect(origin: .zero, size: size)
+                let path = UIBezierPath(ovalIn: rect)
+                path.addClip()
+                image.draw(in: rect)
+
+                UIColor.white.setStroke()
+                path.lineWidth = 3
+                path.stroke()
+            }
+        }
+
+        private func makeCircularSymbolImage(fill: UIColor, systemName: String, size: CGSize, symbolPointSize: CGFloat) -> UIImage? {
+            let renderer = UIGraphicsImageRenderer(size: size)
             return renderer.image { context in
                 let rect = CGRect(origin: .zero, size: size)
                 context.cgContext.setFillColor(fill.cgColor)
@@ -1713,13 +2028,13 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
 
                 if let symbol = UIImage(
                     systemName: systemName,
-                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .bold)
+                    withConfiguration: UIImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .bold)
                 )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
                     let symbolRect = CGRect(
-                        x: (size.width - 12) / 2,
-                        y: (size.height - 12) / 2,
-                        width: 12,
-                        height: 12
+                        x: (size.width - symbolPointSize) / 2,
+                        y: (size.height - symbolPointSize) / 2,
+                        width: symbolPointSize,
+                        height: symbolPointSize
                     )
                     symbol.draw(in: symbolRect)
                 }

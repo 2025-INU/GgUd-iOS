@@ -244,14 +244,11 @@ struct MapView: View {
     private func directionsCard(for card: ParticipantDirectionsCard) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
-                Circle()
-                    .fill(AppColors.primary)
-                    .frame(width: 46, height: 46)
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white)
-                    )
+                ParticipantAvatarView(
+                    profileImageURL: card.profileImageURL,
+                    profileImageData: card.profileImageData,
+                    size: 46
+                )
 
                 Text(card.nickname)
                     .font(.system(size: 16, weight: .bold))
@@ -426,7 +423,9 @@ private extension MapView {
                     title: destination.name ?? "약속 장소",
                     coordinate: coordinate,
                     tint: .systemGreen,
-                    userId: nil
+                    userId: nil,
+                    profileImageURL: nil,
+                    profileImageData: nil
                 )
                 mapCenter = coordinate
             } else {
@@ -468,7 +467,9 @@ private extension MapView {
                     title: participant.nickname ?? "참여자",
                     coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
                     tint: .systemBlue,
-                    userId: participant.userId
+                    userId: participant.userId,
+                    profileImageURL: participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId),
+                    profileImageData: currentUserProfileImageData(for: participant.userId)
                 )
             }
             totalParticipantCount = max(mergedParticipants.count, departureParticipants.count, liveParticipants.count, participantAnnotations.count)
@@ -478,7 +479,9 @@ private extension MapView {
                 return DirectionParticipant(
                     userId: participant.userId,
                     nickname: participant.nickname ?? "참여자",
-                    coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                    coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                    profileImageURL: participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId),
+                    profileImageData: currentUserProfileImageData(for: participant.userId)
                 )
             }
 
@@ -521,6 +524,8 @@ private extension MapView {
                     destination: destinationCoordinate
                 )
                 cards.append(ParticipantDirectionsCard(nickname: participant.nickname, routeOptions: routeOptions))
+                cards[cards.count - 1].profileImageURL = participant.profileImageURL
+                cards[cards.count - 1].profileImageData = participant.profileImageData
             }
             directionCards = cards
             if let preferredTitle = selectedRouteTitle,
@@ -653,7 +658,9 @@ private extension MapView {
                 title: existing.title,
                 coordinate: coordinate,
                 tint: existing.tint,
-                userId: existing.userId ?? userId
+                userId: existing.userId ?? userId,
+                profileImageURL: existing.profileImageURL,
+                profileImageData: existing.profileImageData
             )
         } else {
             participantAnnotations.append(
@@ -661,7 +668,9 @@ private extension MapView {
                     title: resolvedNickname,
                     coordinate: coordinate,
                     tint: .systemBlue,
-                    userId: userId
+                    userId: userId,
+                    profileImageURL: currentUserProfileImageURL(for: userId),
+                    profileImageData: currentUserProfileImageData(for: userId)
                 )
             )
         }
@@ -680,14 +689,27 @@ private extension MapView {
               !accessToken.isEmpty else { return }
 
         let nickname = userSession.nickname.isEmpty ? (fallbackNickname ?? "나") : userSession.nickname
-        let participant = DirectionParticipant(userId: userSession.kakaoUserId, nickname: nickname, coordinate: coordinate)
+        let participant = DirectionParticipant(
+            userId: userSession.kakaoUserId,
+            nickname: nickname,
+            coordinate: coordinate,
+            profileImageURL: userSession.profileImageURL,
+            profileImageData: userSession.profileImageData
+        )
         let routeOptions = await loadDirections(
             accessToken: accessToken,
             tokenType: userSession.backendTokenType ?? "Bearer",
             participant: participant,
             destination: destination
         )
-        directionCards = [ParticipantDirectionsCard(nickname: nickname, routeOptions: routeOptions)]
+        directionCards = [
+            ParticipantDirectionsCard(
+                nickname: nickname,
+                routeOptions: routeOptions,
+                profileImageURL: userSession.profileImageURL,
+                profileImageData: userSession.profileImageData
+            )
+        ]
 
         if let preferredTitle = selectedRouteTitle,
            let matching = routeOptions.first(where: { $0.title == preferredTitle }) {
@@ -736,6 +758,16 @@ private extension MapView {
         default:
             return nil
         }
+    }
+
+    func currentUserProfileImageURL(for userId: Int64?) -> String? {
+        guard let userId, userId == userSession.kakaoUserId else { return nil }
+        return userSession.profileImageURL
+    }
+
+    func currentUserProfileImageData(for userId: Int64?) -> Data? {
+        guard let userId, userId == userSession.kakaoUserId else { return nil }
+        return userSession.profileImageData
     }
 }
 
@@ -809,15 +841,27 @@ private struct DirectionsMapRegionView: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             guard let point = annotation as? MKPointAnnotation else { return nil }
             let identifier = "DirectionsAnnotationView"
-            let view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) ?? MKAnnotationView(annotation: point, reuseIdentifier: identifier)
+            let view = (mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? AvatarAnnotationView) ?? AvatarAnnotationView(annotation: point, reuseIdentifier: identifier)
             view.annotation = point
             view.canShowCallout = false
 
             if let base = annotationMap[point.coordinate.key] {
-                let size: CGFloat = base.tint == .systemGreen ? 44 : 36
-                let symbolSize: CGFloat = base.tint == .systemGreen ? 18 : 16
-                view.image = annotationImage(tint: base.tint, symbolName: base.tint == .systemGreen ? "mappin.circle.fill" : "person.fill", size: size, symbolSize: symbolSize)
-                view.centerOffset = CGPoint(x: 0, y: -size * 0.1)
+                if base.tint == .systemGreen {
+                    let size: CGFloat = 44
+                    let symbolSize: CGFloat = 18
+                    view.image = annotationImage(tint: base.tint, symbolName: "mappin.circle.fill", size: size, symbolSize: symbolSize)
+                    view.avatarImageView.isHidden = true
+                    view.centerOffset = CGPoint(x: 0, y: -size * 0.1)
+                } else {
+                    view.image = nil
+                    view.avatarImageView.isHidden = false
+                    view.configure(
+                        profileImageURL: base.profileImageURL,
+                        profileImageData: base.profileImageData,
+                        tint: base.tint
+                    )
+                    view.centerOffset = CGPoint(x: 0, y: -4)
+                }
             }
 
             return view
@@ -863,18 +907,24 @@ private struct DirectionsAnnotation: Identifiable {
     let coordinate: CLLocationCoordinate2D
     let tint: UIColor
     let userId: Int64?
+    let profileImageURL: String?
+    let profileImageData: Data?
 }
 
 private struct DirectionParticipant {
     let userId: Int64?
     let nickname: String
     let coordinate: CLLocationCoordinate2D
+    let profileImageURL: String?
+    let profileImageData: Data?
 }
 
 private struct ParticipantDirectionsCard: Identifiable {
     let id = UUID()
     let nickname: String
     let routeOptions: [DirectionRouteOptionDisplay]
+    var profileImageURL: String? = nil
+    var profileImageData: Data? = nil
 }
 
 private struct DirectionRouteOptionDisplay: Identifiable {
@@ -948,6 +998,132 @@ private struct DirectionStepDisplay: Identifiable {
 
 private extension CLLocationCoordinate2D {
     var key: String { "\(latitude),\(longitude)" }
+}
+
+private struct ParticipantAvatarView: View {
+    let profileImageURL: String?
+    let profileImageData: Data?
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let profileImageData, let image = UIImage(data: profileImageData) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if let profileImageURL, let url = URL(string: profileImageURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Color.white)
+        .clipShape(Circle())
+        .overlay(
+            Circle()
+                .stroke(Color.white, lineWidth: 3)
+        )
+        .shadow(color: Color.black.opacity(0.14), radius: 8, x: 0, y: 4)
+    }
+
+    private var placeholder: some View {
+        Circle()
+            .fill(AppColors.primary)
+            .overlay(
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.4, weight: .bold))
+                    .foregroundStyle(.white)
+            )
+    }
+}
+
+private final class AvatarAnnotationView: MKAnnotationView {
+    let avatarImageView = UIImageView()
+    private var imageTask: URLSessionDataTask?
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        imageTask?.cancel()
+        avatarImageView.image = nil
+        avatarImageView.backgroundColor = .systemBlue
+    }
+
+    func configure(profileImageURL: String?, profileImageData: Data?, tint: UIColor) {
+        imageTask?.cancel()
+        avatarImageView.backgroundColor = tint
+
+        if let profileImageData, let image = UIImage(data: profileImageData) {
+            avatarImageView.image = image
+            return
+        }
+
+        guard let profileImageURL, let url = URL(string: profileImageURL) else {
+            avatarImageView.image = Self.placeholderImage()
+            return
+        }
+
+        avatarImageView.image = Self.placeholderImage()
+        imageTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let self, let data, let image = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                self.avatarImageView.image = image
+            }
+        }
+        imageTask?.resume()
+    }
+
+    private func setup() {
+        frame = CGRect(x: 0, y: 0, width: 50, height: 50)
+        centerOffset = CGPoint(x: 0, y: -4)
+
+        avatarImageView.frame = bounds
+        avatarImageView.contentMode = .scaleAspectFill
+        avatarImageView.clipsToBounds = true
+        avatarImageView.layer.cornerRadius = bounds.width / 2
+        avatarImageView.layer.borderWidth = 3
+        avatarImageView.layer.borderColor = UIColor.white.cgColor
+        avatarImageView.layer.shadowColor = UIColor.black.withAlphaComponent(0.16).cgColor
+        avatarImageView.layer.shadowOpacity = 1
+        avatarImageView.layer.shadowRadius = 8
+        avatarImageView.layer.shadowOffset = CGSize(width: 0, height: 4)
+        avatarImageView.backgroundColor = .systemBlue
+        avatarImageView.image = Self.placeholderImage()
+        addSubview(avatarImageView)
+    }
+
+    private static func placeholderImage() -> UIImage? {
+        let size = CGSize(width: 50, height: 50)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            UIColor.systemBlue.setFill()
+            UIBezierPath(ovalIn: CGRect(origin: .zero, size: size)).fill()
+
+            let symbolConfig = UIImage.SymbolConfiguration(pointSize: 18, weight: .bold)
+            let symbol = UIImage(systemName: "person.fill", withConfiguration: symbolConfig)?
+                .withTintColor(.white, renderingMode: .alwaysOriginal)
+            symbol?.draw(in: CGRect(x: 16, y: 14, width: 18, height: 18))
+        }
+    }
 }
 
 
