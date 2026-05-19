@@ -23,44 +23,41 @@ struct AppRootView: View {
     @State private var didSyncMyInfo = false
 
     var body: some View {
-        ZStack {
-            Group {
-                switch selected {
-                case .home:
-                    NavigationStack(path: $homePath) {
-                        HomeView()
-                    }
-                case .history:
-                    NavigationStack(path: $historyPath) {
-                        HistoryView()
-                    }
-                case .mypage:
-                    NavigationStack(path: $mypagePath) {
-                        MyPageView()
-                    }
-                }
-            }
-            .id(rootResetID)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .safeAreaInset(edge: .bottom) {
+        Group {
             if userSession.isLoggedIn {
-                CustomTabBar(selected: $selected) { _ in
-                    homePath = NavigationPath()
-                    historyPath = NavigationPath()
-                    mypagePath = NavigationPath()
+                ZStack {
+                    Group {
+                        switch selected {
+                        case .home:
+                            NavigationStack(path: $homePath) {
+                                HomeView()
+                            }
+                        case .history:
+                            NavigationStack(path: $historyPath) {
+                                HistoryView()
+                            }
+                        case .mypage:
+                            NavigationStack(path: $mypagePath) {
+                                MyPageView()
+                            }
+                        }
+                    }
+                    .id(rootResetID)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            }
-        }
-        .ignoresSafeArea(.keyboard, edges: .bottom)
-        .fullScreenCover(
-            isPresented: Binding(
-                get: { !userSession.isLoggedIn },
-                set: { _ in }
-            )
-        ) {
-            NavigationStack {
-                LoginView()
+                .safeAreaInset(edge: .bottom) {
+                    CustomTabBar(selected: $selected) { _ in
+                        homePath = NavigationPath()
+                        historyPath = NavigationPath()
+                        mypagePath = NavigationPath()
+                    }
+                }
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+            } else {
+                NavigationStack {
+                    LoginView()
+                }
+                .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
         .task(id: userSession.backendAccessToken) {
