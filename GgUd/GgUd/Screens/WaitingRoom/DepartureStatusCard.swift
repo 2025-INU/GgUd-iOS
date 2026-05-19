@@ -13,6 +13,8 @@ struct WaitingMember: Identifiable {
     let name: String
     let statusText: String
     let isDone: Bool
+    let profileImageURL: String?
+    let profileImageData: Data?
 }
 
 struct WaitingMemberRowCard: View {
@@ -20,15 +22,10 @@ struct WaitingMemberRowCard: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            // 왼쪽 프로필 원
-            Circle()
-                .fill(AppColors.primary)
-                .frame(width: 44, height: 44)
-                .overlay(
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                )
+            WaitingMemberAvatarView(
+                profileImageURL: member.profileImageURL,
+                profileImageData: member.profileImageData
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(member.name)
@@ -69,10 +66,51 @@ struct WaitingMemberRowCard: View {
     }
 }
 
+private struct WaitingMemberAvatarView: View {
+    let profileImageURL: String?
+    let profileImageData: Data?
+
+    var body: some View {
+        Group {
+            if let profileImageData, let image = UIImage(data: profileImageData) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if let profileImageURL, let url = URL(string: profileImageURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color.white, lineWidth: 2))
+    }
+
+    private var placeholder: some View {
+        Circle()
+            .fill(AppColors.primary)
+            .overlay(
+                Image(systemName: "person.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white)
+            )
+    }
+}
+
 #Preview {
     VStack(spacing: 12) {
-        WaitingMemberRowCard(member: .init(name: "김민수 (나)", statusText: "위치 입력 완료", isDone: true))
-        WaitingMemberRowCard(member: .init(name: "박지훈", statusText: "위치 입력 대기중", isDone: false))
+        WaitingMemberRowCard(member: .init(name: "김민수 (나)", statusText: "위치 입력 완료", isDone: true, profileImageURL: nil, profileImageData: nil))
+        WaitingMemberRowCard(member: .init(name: "박지훈", statusText: "위치 입력 대기중", isDone: false, profileImageURL: nil, profileImageData: nil))
     }
     .padding()
     .background(AppColors.background)

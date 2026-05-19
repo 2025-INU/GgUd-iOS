@@ -74,6 +74,17 @@ struct AppRootView: View {
         .onChange(of: userSession.isLoggedIn) { _, isLoggedIn in
             if !isLoggedIn {
                 didSyncMyInfo = false
+                return
+            }
+
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                selected = .home
+                homePath = NavigationPath()
+                historyPath = NavigationPath()
+                mypagePath = NavigationPath()
+                rootResetID = UUID()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("waitingRoomShouldReturnHome"))) { _ in

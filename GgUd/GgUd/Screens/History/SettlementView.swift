@@ -244,6 +244,8 @@ struct SettlementView: View {
                 userId: expense.userId,
                 name: expense.nickname ?? "참여자",
                 color: palette[index % palette.count],
+                profileImageURL: expense.profileImageUrl,
+                profileImageData: expense.userId == userSession.kakaoUserId ? userSession.profileImageData : nil,
                 paidAmount: expense.paidAmount,
                 balanceAmount: expense.balanceAmount,
                 status: expense.status,
@@ -256,11 +258,17 @@ struct SettlementView: View {
         (settlement?.transfers ?? []).map { transfer in
             let fromColor = colorFor(userId: transfer.fromUserId)
             let toColor = colorFor(userId: transfer.toUserId)
+            let fromMember = memberEntries.first(where: { $0.userId == transfer.fromUserId })
+            let toMember = memberEntries.first(where: { $0.userId == transfer.toUserId })
             return TransferItem(
                 fromName: transfer.fromNickname ?? "참여자",
                 fromColor: fromColor,
+                fromProfileImageURL: fromMember?.profileImageURL,
+                fromProfileImageData: fromMember?.profileImageData,
                 toName: transfer.toNickname ?? "참여자",
                 toColor: toColor,
+                toProfileImageURL: toMember?.profileImageURL,
+                toProfileImageData: toMember?.profileImageData,
                 amount: Int((transfer.amount ?? 0).rounded())
             )
         }
@@ -484,6 +492,8 @@ private struct SettlementMember: Identifiable {
     let userId: Int64?
     let name: String
     let color: Color
+    let profileImageURL: String?
+    let profileImageData: Data?
     let paidAmount: Double?
     let balanceAmount: Double?
     let status: String?
@@ -509,14 +519,12 @@ private struct SettlementRow: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            Circle()
-                .fill(member.color)
-                .frame(width: 44, height: 44)
-                .overlay(
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                )
+            SettlementAvatarView(
+                profileImageURL: member.profileImageURL,
+                profileImageData: member.profileImageData,
+                tint: member.color,
+                size: 44
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(member.isMine ? "\(member.name) (나)" : member.name)
@@ -589,14 +597,12 @@ private struct BalanceRow: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            Circle()
-                .fill(entry.color)
-                .frame(width: 44, height: 44)
-                .overlay(
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                )
+            SettlementAvatarView(
+                profileImageURL: entry.profileImageURL,
+                profileImageData: entry.profileImageData,
+                tint: entry.color,
+                size: 44
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(entry.name)
@@ -628,8 +634,12 @@ private struct TransferItem: Identifiable {
     let id = UUID()
     let fromName: String
     let fromColor: Color
+    let fromProfileImageURL: String?
+    let fromProfileImageData: Data?
     let toName: String
     let toColor: Color
+    let toProfileImageURL: String?
+    let toProfileImageData: Data?
     let amount: Int
 }
 
@@ -638,14 +648,12 @@ private struct TransferRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Circle()
-                .fill(transfer.fromColor)
-                .frame(width: 36, height: 36)
-                .overlay(
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                )
+            SettlementAvatarView(
+                profileImageURL: transfer.fromProfileImageURL,
+                profileImageData: transfer.fromProfileImageData,
+                tint: transfer.fromColor,
+                size: 36
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(transfer.fromName)
@@ -658,6 +666,13 @@ private struct TransferRow: View {
             Image(systemName: "arrow.right")
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(AppColors.primary)
+
+            SettlementAvatarView(
+                profileImageURL: transfer.toProfileImageURL,
+                profileImageData: transfer.toProfileImageData,
+                tint: transfer.toColor,
+                size: 36
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(transfer.toName)
@@ -681,6 +696,52 @@ private struct TransferRow: View {
                 .stroke(Color(red: 0.90, green: 0.91, blue: 0.92), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.05), radius: 1, x: 0, y: 1)
+    }
+}
+
+private struct SettlementAvatarView: View {
+    let profileImageURL: String?
+    let profileImageData: Data?
+    let tint: Color
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let profileImageData, let image = UIImage(data: profileImageData) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if let profileImageURL, let url = URL(string: profileImageURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(
+            Circle()
+                .stroke(Color.white, lineWidth: size >= 40 ? 2 : 1.5)
+        )
+    }
+
+    private var placeholder: some View {
+        Circle()
+            .fill(tint)
+            .overlay(
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.4, weight: .bold))
+                    .foregroundStyle(.white)
+            )
     }
 }
 

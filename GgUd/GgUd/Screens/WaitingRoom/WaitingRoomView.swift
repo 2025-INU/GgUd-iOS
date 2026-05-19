@@ -211,7 +211,7 @@ struct WaitingRoomView: View {
             if currentUserIsHost {
                 return allMembersDone
             }
-            return currentUserLocationSubmitted
+            return true
         }()
 
         guard canEnterMonitoringStage else { return false }
@@ -222,6 +222,14 @@ struct WaitingRoomView: View {
         default:
             return false
         }
+    }
+
+    private var completionCTAButtonEnabled: Bool {
+        currentUserIsHost ? allMembersDone : true
+    }
+
+    private var completionCTATitleText: String {
+        currentUserIsHost ? "모든 참여자가 위치를 입력했습니다!" : "호스트가 중간지점을 선택하면 결과가 자동으로 표시돼요"
     }
 
     private var formattedSummaryDate: String {
@@ -239,9 +247,9 @@ struct WaitingRoomView: View {
     }
 
     private var completionCTA: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        return VStack(alignment: .leading, spacing: 14) {
 
-            Text("모든 참여자가 위치를 입력했습니다!")
+            Text(completionCTATitleText)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(Color(red: 22/255, green: 163/255, blue: 74/255)) // 초록 텍스트
 
@@ -257,8 +265,8 @@ struct WaitingRoomView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .buttonStyle(.plain)
-            .disabled(!allMembersDone)
-            .opacity(allMembersDone ? 1 : 0.45)
+            .disabled(!completionCTAButtonEnabled)
+            .opacity(completionCTAButtonEnabled ? 1 : 0.45)
         }
         .padding(18)
         .background(
@@ -339,7 +347,9 @@ struct WaitingRoomView: View {
                 return WaitingMember(
                     name: (participant.nickname ?? "사용자") + (isMe ? " (나)" : ""),
                     statusText: participant.locationSubmitted == true ? "위치 입력 완료" : "위치 입력 대기중",
-                    isDone: participant.locationSubmitted == true
+                    isDone: participant.locationSubmitted == true,
+                    profileImageURL: participant.profileImageUrl,
+                    profileImageData: isMe ? userSession.profileImageData : nil
                 )
             }
             print("[WaitingRoom] participants count:", participants.count)

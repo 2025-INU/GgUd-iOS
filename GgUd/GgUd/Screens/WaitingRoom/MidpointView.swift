@@ -68,6 +68,7 @@ struct MidpointView: View {
     @State private var currentPromiseStatus: String = ""
     @State private var isCurrentUserHost: Bool = false
     @State private var statusPollingTask: Task<Void, Never>?
+    @State private var hasTriggeredReturnHome = false
 
     @State private var participants: [MarkerItem] = []
     @State private var recommendations: [PlaceItem] = []
@@ -1122,7 +1123,8 @@ private extension MidpointView {
                 return ""
             }
         }()
-        currentPromiseStatus = normalizedStatus
+        let effectiveStatus = mergedPromiseStatus(existing: currentPromiseStatus, incoming: normalizedStatus)
+        currentPromiseStatus = effectiveStatus
 
         let participantsResult: Result<[PromiseParticipantResponse], Error> = await withCheckedContinuation { continuation in
             PromiseAPIClient.shared.getParticipants(
@@ -1172,7 +1174,7 @@ private extension MidpointView {
 
         let shouldStartSelection: Bool = {
             guard isCurrentUserHost else { return false }
-            switch normalizedStatus {
+            switch effectiveStatus {
             case "", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING":
                 return true
             default:
@@ -1200,7 +1202,7 @@ private extension MidpointView {
                 return
             }
         } else {
-            print("[Midpoint] skip startMidpointSelection for status: \(normalizedStatus), isHost: \(isCurrentUserHost)")
+            print("[Midpoint] skip startMidpointSelection for status: \(effectiveStatus), isHost: \(isCurrentUserHost)")
         }
 
         let mapDataResult: Result<PromiseMapDataResponse, Error> = await withCheckedContinuation { continuation in
@@ -1223,10 +1225,24 @@ private extension MidpointView {
         }
 
         let guestWaitingStatuses: Set<String> = ["", "CREATED", "RECRUITING", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "READY", "LOCATION_COLLECTING"]
-        if !isCurrentUserHost && guestWaitingStatuses.contains(normalizedStatus) {
+        if !isCurrentUserHost && guestWaitingStatuses.contains(effectiveStatus) {
             recommendations = []
             loadError = nil
             isLoading = false
+            return
+        }
+
+        if effectiveStatus == "MIDPOINT_CONFIRMED" {
+            selectedMidpointTitle = latestMapData?.recommendedMidpoints?.first?.name
+            isLoading = false
+            await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: selectedAIQuery)
+            return
+        }
+
+        if effectiveStatus == "PLACE_CONFIRMED" {
+            selectedMidpointTitle = latestMapData?.recommendedMidpoints?.first?.name
+            isLoading = false
+            returnHomeImmediatelyAfterPlaceConfirmed(source: "load-midpoint-data")
             return
         }
 
@@ -1238,20 +1254,6 @@ private extension MidpointView {
             ) { result in
                 continuation.resume(returning: result)
             }
-        }
-
-        if normalizedStatus == "MIDPOINT_CONFIRMED" {
-            selectedMidpointTitle = latestMapData?.recommendedMidpoints?.first?.name
-            isLoading = false
-            await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: selectedAIQuery)
-            return
-        }
-
-        if normalizedStatus == "PLACE_CONFIRMED" {
-            selectedMidpointTitle = latestMapData?.recommendedMidpoints?.first?.name
-            isLoading = false
-            await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: selectedAIQuery)
-            return
         }
 
         switch recommendationsValue {
@@ -1296,6 +1298,24 @@ private extension MidpointView {
     private func displayScoreText(_ score: Double?) -> String {
         guard let score, score > 0 else { return "-" }
         return String(format: "%.1f", score)
+    }
+
+    private func statusPriority(_ status: String) -> Int {
+        switch status {
+        case "PLACE_CONFIRMED": return 5
+        case "MIDPOINT_CONFIRMED": return 4
+        case "SELECTING_MIDPOINT": return 3
+        case "ALL_LOCATIONS_SUBMITTED": return 2
+        case "LOCATION_COLLECTING", "READY", "WAITING", "WAITING_ROOM", "WAITING_FOR_PARTICIPANTS", "RECRUITING", "CREATED", "": return 1
+        default: return 0
+        }
+    }
+
+    private func mergedPromiseStatus(existing: String, incoming: String) -> String {
+        let normalizedIncoming = incoming.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !normalizedIncoming.isEmpty else { return existing }
+        guard !existing.isEmpty else { return normalizedIncoming }
+        return statusPriority(normalizedIncoming) >= statusPriority(existing) ? normalizedIncoming : existing
     }
 
     func localizedCategory(_ raw: String?) -> String {
@@ -1387,18 +1407,21 @@ private extension MidpointView {
                 guard !Task.isCancelled else { break }
 
                 guard let nextStatus = await fetchCurrentPromiseStatus() else { continue }
-                guard nextStatus != lastObservedStatus else { continue }
+                let mergedStatus = await MainActor.run {
+                    mergedPromiseStatus(existing: currentPromiseStatus, incoming: nextStatus)
+                }
+                guard mergedStatus != lastObservedStatus else { continue }
 
-                lastObservedStatus = nextStatus
+                lastObservedStatus = mergedStatus
 
                 await MainActor.run {
-                    currentPromiseStatus = nextStatus
-                    print("[MidpointPolling] detected status change:", nextStatus)
+                    currentPromiseStatus = mergedStatus
+                    print("[MidpointPolling] detected status change:", mergedStatus)
                 }
 
                 await loadMidpointData()
 
-                if nextStatus == "PLACE_CONFIRMED" {
+                if mergedStatus == "PLACE_CONFIRMED" {
                     break
                 }
             }
@@ -1429,10 +1452,28 @@ private extension MidpointView {
     }
 
     @MainActor
+    private func returnHomeImmediatelyAfterPlaceConfirmed(source: String) {
+        guard !hasTriggeredReturnHome else { return }
+        hasTriggeredReturnHome = true
+
+        print("[Midpoint] returning home after place confirmation from:", source)
+        statusPollingTask?.cancel()
+        statusPollingTask = nil
+        promiseRealtime.disconnect()
+
+        NotificationCenter.default.post(name: Notification.Name("closeWaitingRoomFlow"), object: nil)
+        NotificationCenter.default.post(name: Notification.Name("waitingRoomShouldReturnHome"), object: nil)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            dismiss()
+        }
+    }
+
+    @MainActor
     private func handleStatusEvent(_ event: PromiseStatusSocketEvent) async {
         print("[MidpointRealtime] received status type:", event.type)
         if let newStatus = event.payload?.newStatus {
-            currentPromiseStatus = newStatus.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            currentPromiseStatus = mergedPromiseStatus(existing: currentPromiseStatus, incoming: newStatus)
         }
 
         restartStatusPollingIfNeeded()
@@ -1443,11 +1484,7 @@ private extension MidpointView {
         case "MIDPOINT_CONFIRMED":
             await loadMidpointData()
         case "PLACE_CONFIRMED":
-            NotificationCenter.default.post(name: Notification.Name("closeWaitingRoomFlow"), object: nil)
-            NotificationCenter.default.post(name: Notification.Name("waitingRoomShouldReturnHome"), object: nil)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                dismiss()
-            }
+            returnHomeImmediatelyAfterPlaceConfirmed(source: "status-event")
         default:
             break
         }
@@ -1624,12 +1661,7 @@ private extension MidpointView {
         switch result {
         case .success:
             print("[Midpoint] final place confirmed. closing waiting room flow")
-            NotificationCenter.default.post(name: Notification.Name("closeWaitingRoomFlow"), object: nil)
-            NotificationCenter.default.post(name: Notification.Name("waitingRoomShouldReturnHome"), object: nil)
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                dismiss()
-            }
+            returnHomeImmediatelyAfterPlaceConfirmed(source: "confirm-final-place-success")
         case let .failure(error):
             actionMessage = error.localizedDescription
             isShowingActionAlert = true

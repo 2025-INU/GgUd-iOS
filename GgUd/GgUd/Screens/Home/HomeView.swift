@@ -400,6 +400,7 @@ struct HomeView: View {
 
                 switch result {
                 case let .success(promise):
+                    print("[InvitePreview] promiseDateTime raw:", promise.promiseDateTime ?? "nil")
                     invitePreview = promise
                     invitePreviewError = nil
                 case let .failure(error):
@@ -494,21 +495,109 @@ struct HomeView: View {
             accessToken: accessToken,
             tokenType: userSession.backendTokenType ?? "Bearer"
         ) { result in
-            DispatchQueue.main.async {
-                isLoading = false
+            switch result {
+            case let .success(promises):
+                Task {
+                    let mapped = await enrichHomePromises(promises)
+                    await MainActor.run {
+                        isLoading = false
+                        ongoing = mapped.filter { $0.segment == .ongoing }.map(\.promise)
+                        scheduled = mapped.filter { $0.segment == .scheduled }.map(\.promise)
+                    }
+                }
 
-                switch result {
-                case let .success(promises):
-                    let mapped = promises.compactMap(mapToHomePromise)
-                    ongoing = mapped.filter { $0.segment == .ongoing }.map(\.promise)
-                    scheduled = mapped.filter { $0.segment == .scheduled }.map(\.promise)
-
-                case let .failure(error):
+            case let .failure(error):
+                DispatchQueue.main.async {
+                    isLoading = false
                     loadError = "약속 목록을 불러오지 못했습니다.\n\(error.localizedDescription)"
                     ongoing = []
                     scheduled = []
                 }
             }
+        }
+    }
+
+    private func enrichHomePromises(_ promises: [BackendPromise]) async -> [(segment: HomeSegment, promise: HomePromise)] {
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            return promises.compactMap(mapToHomePromise)
+        }
+
+        var enriched: [(segment: HomeSegment, promise: HomePromise)] = []
+
+        await withTaskGroup(of: (Int, (segment: HomeSegment, promise: HomePromise)?).self) { group in
+            for (index, backendPromise) in promises.enumerated() {
+                group.addTask {
+                    let mapped = self.mapToHomePromise(backendPromise)
+                    guard var mapped else { return (index, nil) }
+                    guard let promiseId = mapped.promise.promiseId else { return (index, mapped) }
+
+                    let avatars = await self.fetchParticipantAvatars(
+                        promiseId: promiseId,
+                        accessToken: accessToken,
+                        tokenType: tokenType
+                    )
+
+                    mapped.promise = HomePromise(
+                        promiseId: mapped.promise.promiseId,
+                        title: mapped.promise.title,
+                        date: mapped.promise.date,
+                        time: mapped.promise.time,
+                        people: mapped.promise.people,
+                        place: mapped.promise.place,
+                        statusText: mapped.promise.statusText,
+                        confirmedPlace: mapped.promise.confirmedPlace,
+                        canComplete: mapped.promise.canComplete,
+                        participantAvatars: avatars
+                    )
+                    return (index, mapped)
+                }
+            }
+
+            var buffer: [(Int, (segment: HomeSegment, promise: HomePromise)?)] = []
+            for await item in group {
+                buffer.append(item)
+            }
+
+            buffer
+                .sorted { $0.0 < $1.0 }
+                .forEach { _, mapped in
+                    if let mapped {
+                        enriched.append(mapped)
+                    }
+                }
+        }
+
+        return enriched
+    }
+
+    private func fetchParticipantAvatars(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String
+    ) async -> [HomeParticipantAvatar] {
+        let result: Result<[PromiseParticipantResponse], Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getParticipants(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch result {
+        case let .success(participants):
+            return participants.map { participant in
+                HomeParticipantAvatar(
+                    userId: participant.userId,
+                    profileImageURL: participant.profileImageUrl,
+                    profileImageData: participant.userId == userSession.kakaoUserId ? userSession.profileImageData : nil
+                )
+            }
+        case let .failure(error):
+            print("[Home] failed to fetch participants for promiseId \(promiseId):", error.localizedDescription)
+            return []
         }
     }
 
@@ -542,7 +631,8 @@ struct HomeView: View {
                 place: place,
                 statusText: segment == .ongoing ? "진행중" : "예정",
                 confirmedPlace: promise.confirmedPlaceName,
-                canComplete: segment == .ongoing && promise.hostId == userSession.kakaoUserId
+                canComplete: segment == .ongoing && promise.hostId == userSession.kakaoUserId,
+                participantAvatars: Array(repeating: HomeParticipantAvatar(userId: nil, profileImageURL: nil, profileImageData: nil), count: peopleCount)
             )
         )
     }
@@ -564,11 +654,35 @@ struct HomeView: View {
         localDateTimeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
         if let date = localDateTimeFormatter.date(from: raw) { return date }
 
+        let fractionalLocalDateTimeFormatter = DateFormatter()
+        fractionalLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        fractionalLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        fractionalLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"
+        if let date = fractionalLocalDateTimeFormatter.date(from: raw) { return date }
+
+        let shortLocalDateTimeFormatter = DateFormatter()
+        shortLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        shortLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        shortLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        if let date = shortLocalDateTimeFormatter.date(from: raw) { return date }
+
         let spacedLocalDateTimeFormatter = DateFormatter()
         spacedLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
         spacedLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
         spacedLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return spacedLocalDateTimeFormatter.date(from: raw)
+        if let date = spacedLocalDateTimeFormatter.date(from: raw) { return date }
+
+        let fractionalSpacedLocalDateTimeFormatter = DateFormatter()
+        fractionalSpacedLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        fractionalSpacedLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        fractionalSpacedLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSS"
+        if let date = fractionalSpacedLocalDateTimeFormatter.date(from: raw) { return date }
+
+        let shortSpacedLocalDateTimeFormatter = DateFormatter()
+        shortSpacedLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        shortSpacedLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        shortSpacedLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return shortSpacedLocalDateTimeFormatter.date(from: raw)
     }
 
     private func formatDate(_ raw: String?) -> String {
@@ -889,42 +1003,86 @@ private struct InviteCodeJoinSheet: View {
 
     private func formatDate(_ raw: String?) -> String {
         guard let raw else { return "-" }
-
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        let fallbackFormatter = ISO8601DateFormatter()
-        fallbackFormatter.formatOptions = [.withInternetDateTime]
-
+        guard let date = parsePromiseDate(raw) else {
+            return String(raw.prefix(10))
+        }
         let outputFormatter = DateFormatter()
         outputFormatter.locale = Locale(identifier: "ko_KR")
+        outputFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
         outputFormatter.dateFormat = "yyyy-MM-dd"
-
-        if let date = isoFormatter.date(from: raw) ?? fallbackFormatter.date(from: raw) {
-            return outputFormatter.string(from: date)
-        }
-
-        return String(raw.prefix(10))
+        return outputFormatter.string(from: date)
     }
 
     private func formatTime(_ raw: String?) -> String {
         guard let raw else { return "--:--" }
+        guard let date = parsePromiseDate(raw) else {
+            return "--:--"
+        }
+        let outputFormatter = DateFormatter()
+        outputFormatter.locale = Locale(identifier: "ko_KR")
+        outputFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        outputFormatter.dateFormat = "HH:mm"
+        return outputFormatter.string(from: date)
+    }
 
+    private func parsePromiseDate(_ raw: String) -> Date? {
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoFormatter.date(from: raw) {
+            return date
+        }
 
         let fallbackFormatter = ISO8601DateFormatter()
         fallbackFormatter.formatOptions = [.withInternetDateTime]
-
-        let outputFormatter = DateFormatter()
-        outputFormatter.locale = Locale(identifier: "ko_KR")
-        outputFormatter.dateFormat = "HH:mm"
-
-        if let date = isoFormatter.date(from: raw) ?? fallbackFormatter.date(from: raw) {
-            return outputFormatter.string(from: date)
+        if let date = fallbackFormatter.date(from: raw) {
+            return date
         }
 
-        return "--:--"
+        let localDateTimeFormatter = DateFormatter()
+        localDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        localDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        localDateTimeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        if let date = localDateTimeFormatter.date(from: raw) {
+            return date
+        }
+
+        let fractionalLocalDateTimeFormatter = DateFormatter()
+        fractionalLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        fractionalLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        fractionalLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"
+        if let date = fractionalLocalDateTimeFormatter.date(from: raw) {
+            return date
+        }
+
+        let shortLocalDateTimeFormatter = DateFormatter()
+        shortLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        shortLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        shortLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        if let date = shortLocalDateTimeFormatter.date(from: raw) {
+            return date
+        }
+
+        let spacedLocalDateTimeFormatter = DateFormatter()
+        spacedLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        spacedLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        spacedLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        if let date = spacedLocalDateTimeFormatter.date(from: raw) {
+            return date
+        }
+
+        let fractionalSpacedLocalDateTimeFormatter = DateFormatter()
+        fractionalSpacedLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        fractionalSpacedLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        fractionalSpacedLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSS"
+        if let date = fractionalSpacedLocalDateTimeFormatter.date(from: raw) {
+            return date
+        }
+
+        let shortSpacedLocalDateTimeFormatter = DateFormatter()
+        shortSpacedLocalDateTimeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        shortSpacedLocalDateTimeFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        shortSpacedLocalDateTimeFormatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return shortSpacedLocalDateTimeFormatter.date(from: raw)
     }
 }
 

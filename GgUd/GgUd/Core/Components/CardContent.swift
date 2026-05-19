@@ -11,6 +11,14 @@ struct HomePromise: Identifiable {
     let statusText: String
     let confirmedPlace: String?
     let canComplete: Bool
+    let participantAvatars: [HomeParticipantAvatar]
+}
+
+struct HomeParticipantAvatar: Identifiable {
+    let id = UUID()
+    let userId: Int64?
+    let profileImageURL: String?
+    let profileImageData: Data?
 }
 
 struct CardContent: View {
@@ -129,18 +137,11 @@ struct CardContent: View {
 
     private var avatarGroup: some View {
         HStack(spacing: -8) {
-            ForEach(0..<min(item.people, 4), id: \.self) { i in
-                Circle()
-                    .fill(avatarColor(at: i))
-                    .frame(width: 40, height: 40)
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(.white)
-                    )
-                    .overlay(
-                        Circle().stroke(Color.white, lineWidth: 2)
-                    )
+            ForEach(Array(item.participantAvatars.prefix(4).enumerated()), id: \.offset) { index, avatar in
+                HomeCardAvatarView(
+                    avatar: avatar,
+                    tint: avatarColor(at: index)
+                )
             }
 
             if item.people > 4 {
@@ -168,5 +169,47 @@ struct CardContent: View {
         ]
         let seed = abs(item.id.uuidString.hashValue)
         return palette[(seed + index) % palette.count]
+    }
+}
+
+private struct HomeCardAvatarView: View {
+    let avatar: HomeParticipantAvatar
+    let tint: Color
+
+    var body: some View {
+        Group {
+            if let data = avatar.profileImageData, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if let profileImageURL = avatar.profileImageURL,
+                      let url = URL(string: profileImageURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: 40, height: 40)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color.white, lineWidth: 2))
+    }
+
+    private var placeholder: some View {
+        Circle()
+            .fill(tint)
+            .overlay(
+                Image(systemName: "person.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+            )
     }
 }
