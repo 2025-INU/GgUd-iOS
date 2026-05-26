@@ -9,12 +9,19 @@ import SwiftUI
 
 
 struct WaitingMember: Identifiable {
-    let id = UUID()
+    let userId: Int64?
     let name: String
     let statusText: String
     let isDone: Bool
     let profileImageURL: String?
     let profileImageData: Data?
+
+    var id: String {
+        if let userId {
+            return "user-\(userId)"
+        }
+        return "name-\(name)"
+    }
 }
 
 struct WaitingMemberRowCard: View {
@@ -109,8 +116,8 @@ private struct WaitingMemberAvatarView: View {
 
 #Preview {
     VStack(spacing: 12) {
-        WaitingMemberRowCard(member: .init(name: "김민수 (나)", statusText: "위치 입력 완료", isDone: true, profileImageURL: nil, profileImageData: nil))
-        WaitingMemberRowCard(member: .init(name: "박지훈", statusText: "위치 입력 대기중", isDone: false, profileImageURL: nil, profileImageData: nil))
+        WaitingMemberRowCard(member: .init(userId: 1, name: "김민수 (나)", statusText: "위치 입력 완료", isDone: true, profileImageURL: nil, profileImageData: nil))
+        WaitingMemberRowCard(member: .init(userId: 2, name: "박지훈", statusText: "위치 입력 대기중", isDone: false, profileImageURL: nil, profileImageData: nil))
     }
     .padding()
     .background(AppColors.background)

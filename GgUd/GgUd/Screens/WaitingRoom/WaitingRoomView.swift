@@ -29,6 +29,7 @@ struct WaitingRoomView: View {
     @State private var currentUserLocationSubmitted: Bool = false
     @State private var currentUserIsHost: Bool = false
     @StateObject private var promiseRealtime = PromiseRealtimeManager()
+    @State private var waitingRoomPollingTask: Task<Void, Never>?
 
     
     var body: some View {
@@ -155,9 +156,12 @@ struct WaitingRoomView: View {
                 return
             }
             connectStatusSocketIfPossible()
+            restartWaitingRoomPollingIfNeeded()
         }
         .onDisappear {
             promiseRealtime.disconnect()
+            waitingRoomPollingTask?.cancel()
+            waitingRoomPollingTask = nil
         }
         .onReceive(promiseRealtime.$latestStatusEvent.compactMap { $0 }) { event in
             Task { await handleSocketEvent(event) }
@@ -279,6 +283,15 @@ struct WaitingRoomView: View {
         )
     }
 
+    private var shouldPollWaitingRoom: Bool {
+        switch normalizedPromiseStatus {
+        case "PLACE_CONFIRMED", "COMPLETED", "DONE", "FINISHED", "CANCELED", "CANCELLED":
+            return false
+        default:
+            return true
+        }
+    }
+
     @MainActor
     @discardableResult
     private func loadWaitingRoom() async -> String {
@@ -345,6 +358,7 @@ struct WaitingRoomView: View {
                     currentUserIsHost = participant.host == true
                 }
                 return WaitingMember(
+                    userId: participant.userId,
                     name: (participant.nickname ?? "사용자") + (isMe ? " (나)" : ""),
                     statusText: participant.locationSubmitted == true ? "위치 입력 완료" : "위치 입력 대기중",
                     isDone: participant.locationSubmitted == true,
@@ -384,6 +398,34 @@ struct WaitingRoomView: View {
         }
 
         return finalStatus
+    }
+
+    private func restartWaitingRoomPollingIfNeeded() {
+        waitingRoomPollingTask?.cancel()
+        guard shouldPollWaitingRoom else { return }
+
+        waitingRoomPollingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { break }
+                await MainActor.run {
+                    if !shouldPollWaitingRoom {
+                        waitingRoomPollingTask?.cancel()
+                    }
+                }
+                guard !Task.isCancelled else { break }
+                let statusAfterLoad = await MainActor.run {
+                    isLoading ? normalizedPromiseStatus : nil
+                }
+                if statusAfterLoad != nil {
+                    continue
+                }
+                let latestStatus = await loadWaitingRoom()
+                if latestStatus == "PLACE_CONFIRMED" || !shouldPollWaitingRoom {
+                    break
+                }
+            }
+        }
     }
 
     @MainActor
@@ -534,6 +576,8 @@ struct WaitingRoomView: View {
     @MainActor
     private func returnToHomeAfterPlaceConfirmed() {
         promiseRealtime.disconnect()
+        waitingRoomPollingTask?.cancel()
+        waitingRoomPollingTask = nil
         NotificationCenter.default.post(name: Notification.Name("closeWaitingRoomFlow"), object: nil)
         NotificationCenter.default.post(name: .waitingRoomShouldReturnHome, object: nil)
 
@@ -551,6 +595,7 @@ struct WaitingRoomView: View {
         }
 
         await loadWaitingRoom()
+        restartWaitingRoomPollingIfNeeded()
 
         switch event.type {
         case "ALL_LOCATIONS_SUBMITTED", "MIDPOINT_CONFIRMED":
