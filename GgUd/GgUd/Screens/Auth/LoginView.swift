@@ -78,9 +78,11 @@ struct LoginView: View {
                     VStack(spacing: 12) {
                         Button(action: loginWithKakao) {
                             HStack(spacing: 10) {
-                                Image(systemName: "bubble.left.and.bubble.right.fill")
-                                    .font(.system(size: 18, weight: .bold))
-                                    .foregroundStyle(.white)
+                                Image("KakaoLoginIcon")
+                                    .resizable()
+                                    .renderingMode(.original)
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 18, height: 17)
 
                                 Text(isLoggingIn ? "로그인 중..." : "카카오톡으로 시작하기")
                                     .font(.system(size: 16, weight: .bold))

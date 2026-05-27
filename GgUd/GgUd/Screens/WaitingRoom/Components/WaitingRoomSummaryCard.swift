@@ -23,9 +23,11 @@ struct WaitingRoomSummaryCard: View {
                     ))
                     .frame(width: 52, height: 52)
                     .overlay(
-                        Image(systemName: "calendar")
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundStyle(.white)
+                        Image("CalendarSummaryIcon")
+                            .renderingMode(.original)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 17, height: 17)
                     )
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -41,11 +43,7 @@ struct WaitingRoomSummaryCard: View {
                 Spacer()
             }
 
-            HStack(spacing: 10) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.13, green: 0.64, blue: 0.25))
-
+            HStack(spacing: 0) {
                 Text(subtitle)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color(red: 0.13, green: 0.64, blue: 0.25))
@@ -60,7 +58,16 @@ struct WaitingRoomSummaryCard: View {
         .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color(red: 0.92, green: 0.97, blue: 1.0))
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: "#F0F9FF"),
+                            Color(hex: "#EFF6FF")
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
         )
     }
 }

@@ -34,15 +34,22 @@ struct WaitingRoomView: View {
     
     var body: some View {
         ZStack {
-            AppColors.background.ignoresSafeArea()
+            Color.white.ignoresSafeArea()
 
             // ✅ 기존 대기실 화면
             VStack(spacing: 0) {
 
-                AppBar(title: "약속 대기방", onBack: {
-                    NotificationCenter.default.post(name: .waitingRoomShouldReturnHome, object: nil)
-                    dismiss()
-                })
+                AppBar(
+                    title: "약속 대기방",
+                    onBack: {
+                        NotificationCenter.default.post(name: .waitingRoomShouldReturnHome, object: nil)
+                        dismiss()
+                    },
+                    onHome: {
+                        NotificationCenter.default.post(name: .waitingRoomShouldReturnHome, object: nil)
+                        dismiss()
+                    }
+                )
 
                 ScrollView {
                     WaitingRoomSummaryCard(
@@ -51,6 +58,7 @@ struct WaitingRoomView: View {
                         timeText: formattedSummaryTime,
                         subtitle: summarySubtitle
                     )
+                    .padding(.top, 28)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 6)
 
@@ -58,10 +66,10 @@ struct WaitingRoomView: View {
 
                         // 2) 친구 초대하기 섹션 (임시 자리)
                         Text("친구 초대하기")
-                            .font(.system(size: 18, weight: .bold))
+                            .font(.system(size: 20, weight: .bold))
                             .foregroundStyle(AppColors.text)
 
-                        KakaoShareButton(title: isFetchingInviteCode ? "초대 코드 불러오는 중..." : "카카오톡으로 링크 공유") {
+                        KakaoShareButton(title: isFetchingInviteCode ? "초대 코드 불러오는 중..." : "카카오톡으로 코드 공유") {
                             Task {
                                 await fetchInviteCodeAndShare()
                             }
@@ -73,36 +81,38 @@ struct WaitingRoomView: View {
                                 await fetchInviteCodeAndCopy()
                             }
                         } label: {
-                            Text(isFetchingInviteCode ? "초대 코드 불러오는 중..." : "초대 코드 복사")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(AppColors.primary)
+                            Text(inviteCodeDisplayText)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Color(hex: "#3B82F6"))
                                 .frame(maxWidth: .infinity)
-                                .frame(height: 48)
+                                .frame(height: 64)
                                 .background(Color.white)
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(AppColors.border, lineWidth: 1)
+                                        .stroke(Color(hex: "#3B82F6"), lineWidth: 1)
                                 )
                         }
                         .buttonStyle(.plain)
                         .disabled(isFetchingInviteCode)
 
-                        Text("링크를 통해 친구들이 약속에 참여할 수 있어요")
-                            .font(.system(size: 13))
+                        Text("코드를 통해 친구들이 약속에 참여할 수 있어요")
+                            .font(.system(size: 14))
                             .foregroundStyle(AppColors.subText)
+                            .frame(maxWidth: .infinity)
+                            .multilineTextAlignment(.center)
 
                         // 3) 참여한 친구
                         HStack {
                         Text("참여한 친구")
-                                .font(.system(size: 18, weight: .bold))
+                                .font(.system(size: 20, weight: .bold))
                                 .foregroundStyle(AppColors.text)
 
                             Spacer()
 
                             Text("\(members.count)명")
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppColors.primary)
+                                .foregroundStyle(Color(hex: "#0284C7"))
                         }
                         .padding(.top, 12)
 
@@ -117,12 +127,16 @@ struct WaitingRoomView: View {
                                 .padding(.vertical, 8)
                         } else {
                             ForEach(members) { m in
-                                NavigationLink {
-                                    DepartureSetupView(promiseId: promiseId)
-                                } label: {
+                                if m.userId == userSession.kakaoUserId {
+                                    NavigationLink {
+                                        DepartureSetupView(promiseId: promiseId)
+                                    } label: {
+                                        WaitingMemberRowCard(member: m)
+                                    }
+                                    .buttonStyle(.plain)
+                                } else {
                                     WaitingMemberRowCard(member: m)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
 
@@ -151,6 +165,7 @@ struct WaitingRoomView: View {
         }
         .task(id: promiseId) {
             let statusAfterLoad = await loadWaitingRoom()
+            await preloadInviteCodeIfNeeded()
             guard statusAfterLoad != "PLACE_CONFIRMED" else {
                 print("[WaitingRoom] skipping websocket connect because status is already PLACE_CONFIRMED")
                 return
@@ -158,10 +173,16 @@ struct WaitingRoomView: View {
             connectStatusSocketIfPossible()
             restartWaitingRoomPollingIfNeeded()
         }
+        .onAppear {
+            NotificationCenter.default.post(name: Notification.Name("hideCustomTabBar"), object: nil)
+        }
         .onDisappear {
             promiseRealtime.disconnect()
             waitingRoomPollingTask?.cancel()
             waitingRoomPollingTask = nil
+            if !navigateToMidpoint {
+                NotificationCenter.default.post(name: Notification.Name("showCustomTabBar"), object: nil)
+            }
         }
         .onReceive(promiseRealtime.$latestStatusEvent.compactMap { $0 }) { event in
             Task { await handleSocketEvent(event) }
@@ -236,6 +257,13 @@ struct WaitingRoomView: View {
         currentUserIsHost ? "모든 참여자가 위치를 입력했습니다!" : "호스트가 중간지점을 선택하면 결과가 자동으로 표시돼요"
     }
 
+    private var inviteCodeDisplayText: String {
+        if let cachedInviteCode, !cachedInviteCode.isEmpty {
+            return "초대 코드: \(cachedInviteCode)"
+        }
+        return isFetchingInviteCode ? "초대 코드 불러오는 중..." : "초대 코드 불러오기"
+    }
+
     private var formattedSummaryDate: String {
         guard let dateString = summary?.promiseDateTime,
               let date = WaitingRoomDateFormatter.parse(dateString)
@@ -250,12 +278,26 @@ struct WaitingRoomView: View {
         return WaitingRoomDateFormatter.time.string(from: date)
     }
 
+    private func participantDisplayName(_ participant: PromiseParticipantResponse, isMe: Bool) -> String {
+        let baseName = participant.nickname ?? "사용자"
+        let hostPrefix = participant.host == true ? "(호스트) " : ""
+        let mySuffix = isMe ? " (나)" : ""
+        return hostPrefix + baseName + mySuffix
+    }
+
+    private func waitingMemberStatusText(participant: PromiseParticipantResponse, isMe: Bool) -> String {
+        if participant.locationSubmitted == true {
+            return "위치 입력 완료"
+        }
+        return isMe ? "클릭해서 위치 입력하기" : "위치 입력 대기중"
+    }
+
     private var completionCTA: some View {
         return VStack(alignment: .leading, spacing: 14) {
 
             Text(completionCTATitleText)
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Color(red: 22/255, green: 163/255, blue: 74/255)) // 초록 텍스트
+                .foregroundStyle(Color(hex: "#166534"))
 
             Button {
                 navigateToMidpoint = true
@@ -265,7 +307,7 @@ struct WaitingRoomView: View {
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 48)
-                    .background(Color(red: 22/255, green: 163/255, blue: 74/255)) // 진초록
+                    .background(Color(hex: "#16A34A"))
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .buttonStyle(.plain)
@@ -275,12 +317,20 @@ struct WaitingRoomView: View {
         .padding(18)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(red: 220/255, green: 252/255, blue: 231/255)) // 연한 초록 배경
+                .fill(Color(hex: "#F0FDF4"))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color(red: 134/255, green: 239/255, blue: 172/255), lineWidth: 1) // 연한 초록 테두리
+                .stroke(Color(hex: "#BBF7D0"), lineWidth: 1)
         )
+        .overlay(alignment: .bottom) {
+            Text("최종 확정은 호스트만 가능해요.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color(hex: "#6B7280"))
+                .frame(maxWidth: .infinity, alignment: .center)
+                .offset(y: 24)
+        }
+        .padding(.bottom, 18)
     }
 
     private var shouldPollWaitingRoom: Bool {
@@ -359,9 +409,10 @@ struct WaitingRoomView: View {
                 }
                 return WaitingMember(
                     userId: participant.userId,
-                    name: (participant.nickname ?? "사용자") + (isMe ? " (나)" : ""),
-                    statusText: participant.locationSubmitted == true ? "위치 입력 완료" : "위치 입력 대기중",
+                    name: participantDisplayName(participant, isMe: isMe),
+                    statusText: waitingMemberStatusText(participant: participant, isMe: isMe),
                     isDone: participant.locationSubmitted == true,
+                    isHost: participant.host == true,
                     profileImageURL: participant.profileImageUrl,
                     profileImageData: isMe ? userSession.profileImageData : nil
                 )
@@ -406,7 +457,7 @@ struct WaitingRoomView: View {
 
         waitingRoomPollingTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled else { break }
                 await MainActor.run {
                     if !shouldPollWaitingRoom {
@@ -438,6 +489,18 @@ struct WaitingRoomView: View {
             shareInviteCode(inviteCode)
         case let .failure(error):
             presentInviteAlert(friendlyInviteErrorMessage(error))
+        }
+    }
+
+    @MainActor
+    private func preloadInviteCodeIfNeeded() async {
+        guard cachedInviteCode == nil, !isFetchingInviteCode else { return }
+
+        switch await fetchInviteCode() {
+        case let .success(inviteCode):
+            cachedInviteCode = inviteCode
+        case let .failure(error):
+            print("[InviteCode] preload error:", error.localizedDescription)
         }
     }
 

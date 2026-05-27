@@ -147,9 +147,9 @@ struct HomeView: View {
                 showPromiseActionPopup = true
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 28, weight: .regular))
+                    .font(.system(size: 24, weight: .regular))
                     .foregroundStyle(.white)
-                    .frame(width: 72, height: 72)
+                    .frame(width: 64, height: 64)
                     .background(
                         LinearGradient(
                             colors: [Color(hex: "#3B82F6"), Color(hex: "#2563EB")],
@@ -204,6 +204,7 @@ struct HomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .waitingRoomShouldReturnHome)) { _ in
             print("[Home] received waitingRoomShouldReturnHome")
             print("[Home] before return home joinedPromiseId:", joinedPromiseId as Any, "presentedWaitingRoomPromiseId:", presentedWaitingRoomPromiseId as Any)
+            selectedSegment = .scheduled
             joinedPromiseId = nil
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 presentedWaitingRoomPromiseId = nil
@@ -213,6 +214,7 @@ struct HomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("closeWaitingRoomFlow"))) { _ in
             print("[Home] received closeWaitingRoomFlow")
             print("[Home] before close flow joinedPromiseId:", joinedPromiseId as Any, "presentedWaitingRoomPromiseId:", presentedWaitingRoomPromiseId as Any)
+            selectedSegment = .scheduled
             joinedPromiseId = nil
             showJoinSheet = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -605,11 +607,14 @@ struct HomeView: View {
         let rawStatus = (promise.status ?? "").uppercased()
         let promiseDate = parsePromiseDate(promise.promiseDateTime)
         let now = Date()
+        let oneHourBeforeNow = now.addingTimeInterval(60 * 60)
 
         let segment: HomeSegment
         if rawStatus == "IN_PROGRESS" {
             segment = .ongoing
-        } else if let promiseDate, promiseDate > now {
+        } else if let promiseDate, promiseDate <= oneHourBeforeNow {
+            segment = .ongoing
+        } else if let promiseDate, promiseDate > oneHourBeforeNow {
             segment = .scheduled
         } else {
             return nil

@@ -27,7 +27,7 @@ struct DepartureSetupView: View {
 
     var body: some View {
         ZStack {
-            AppColors.background.ignoresSafeArea()
+            Color.white.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 topBar
@@ -42,42 +42,49 @@ struct DepartureSetupView: View {
 
                         currentLocationButton
 
+                        searchField
+
                         if let selectedLocation {
                             selectedLocationPill(text: selectedLocation)
                         }
 
-                        searchField
 
-
-                        Button(action: submitDeparture) {
-                            Text("약속 참여하기")
-                                .overlay {
-                                    if isSubmitting {
-                                        ProgressView()
-                                            .tint(.white)
+                        VStack(spacing: 10) {
+                            Button(action: submitDeparture) {
+                                Text("약속 참여하기")
+                                    .overlay {
+                                        if isSubmitting {
+                                            ProgressView()
+                                                .tint(.white)
+                                        }
                                     }
-                                }
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(canJoin ? Color.white : Color.white.opacity(0.6))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 52)
-                                .background(
-                                    LinearGradient(
-                                        colors: canJoin
-                                        ? [Color(red: 0.07, green: 0.65, blue: 0.96),
-                                           Color(red: 0.16, green: 0.40, blue: 0.95)]
-                                        : [Color(red: 0.55, green: 0.80, blue: 0.98),
-                                           Color(red: 0.52, green: 0.67, blue: 0.95)],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(canJoin ? Color.white : Color.white.opacity(0.6))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 58)
+                                    .background(
+                                        LinearGradient(
+                                            colors: canJoin
+                                            ? [Color(red: 0.07, green: 0.65, blue: 0.96),
+                                               Color(red: 0.16, green: 0.40, blue: 0.95)]
+                                            : [Color(red: 0.55, green: 0.80, blue: 0.98),
+                                               Color(red: 0.52, green: 0.67, blue: 0.95)],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
                                     )
-                                )
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                .shadow(color: Color.black.opacity(canJoin ? 0.12 : 0.06), radius: 12, x: 0, y: 6)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .shadow(color: Color.black.opacity(canJoin ? 0.12 : 0.06), radius: 12, x: 0, y: 6)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!canJoin)
+
+                            Text("참여하면 약속 대기방으로 이동합니다")
+                                .font(.system(size: 12, weight: .regular))
+                                .foregroundStyle(AppColors.subText)
+                                .frame(maxWidth: .infinity, alignment: .center)
                         }
-                        .buttonStyle(.plain)
                         .padding(.top, 10)
-                        .disabled(!canJoin)
 
                         NavigationLink(
                             destination: WaitingRoomView(promiseId: promiseId),
@@ -86,14 +93,9 @@ struct DepartureSetupView: View {
                             EmptyView()
                         }
                         .hidden()
-
-                        Text("참여하면 약속 대기방으로 이동합니다")
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundStyle(AppColors.subText)
-                            .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .padding(.horizontal, 24)
-                    .padding(.top, 16)
+                    .padding(.top, 28)
                     .padding(.bottom, 120)
                 }
             }
@@ -102,6 +104,16 @@ struct DepartureSetupView: View {
         .toolbar(.hidden, for: .tabBar)
         .task(id: promiseId) {
             await loadSummary()
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Notification.Name("hideCustomTabBar"), object: nil)
+            }
+        }
+        .onDisappear {
+            if !navigateToWaitingRoom {
+                NotificationCenter.default.post(name: Notification.Name("showCustomTabBar"), object: nil)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("closeWaitingRoomFlow"))) { _ in
             print("[DepartureSetup] received closeWaitingRoomFlow")
@@ -157,7 +169,7 @@ struct DepartureSetupView: View {
     }
 
     private var topBar: some View {
-        AppBar(title: "약속 참여", onBack: { dismiss() })
+        AppBar(title: "약속 참여하기", onBack: { dismiss() })
     }
 
     private var summaryCard: some View {
@@ -172,9 +184,10 @@ struct DepartureSetupView: View {
                     ))
                     .frame(width: 56, height: 56)
                     .overlay(
-                        Image(systemName: "calendar")
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundStyle(.white)
+                        Image("CalendarSummaryIcon")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 22, height: 22)
                     )
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -230,18 +243,20 @@ struct DepartureSetupView: View {
 
     private var currentLocationButton: some View {
         HStack(spacing: 10) {
-            Image(systemName: "location.circle")
-                .font(.system(size: 18, weight: .semibold))
+            Image("CurrentLocationActionIcon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 17, height: 17)
             Text("현재 위치로 설정")
                 .font(.system(size: 16, weight: .semibold))
         }
-        .foregroundStyle(AppColors.primary)
+        .foregroundStyle(Color(red: 0.01, green: 0.41, blue: 0.63))
         .frame(maxWidth: .infinity)
         .frame(height: 56)
-        .background(Color(red: 0.93, green: 0.97, blue: 1.0))
+        .background(Color(red: 0.94, green: 0.98, blue: 1.0))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color(red: 0.65, green: 0.82, blue: 0.98), lineWidth: 1)
+                .stroke(Color(red: 0.73, green: 0.90, blue: 0.99), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(Rectangle())
@@ -256,21 +271,26 @@ struct DepartureSetupView: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(AppColors.subText)
-            TextField("주소를 검색하세요", text: $addressText)
+                .foregroundStyle(Color(red: 0.42, green: 0.45, blue: 0.50))
+            TextField(
+                "주소를 검색하세요",
+                text: $addressText,
+                prompt: Text("주소를 검색하세요")
+                    .foregroundStyle(Color(red: 0.42, green: 0.45, blue: 0.50))
+            )
                 .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(AppColors.text)
+                .foregroundStyle(Color(red: 0.07, green: 0.09, blue: 0.16))
                 .onChange(of: addressText) { newValue in
                     let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                     selectedLocation = trimmed.isEmpty ? nil : trimmed
                 }
         }
         .padding(.horizontal, 16)
-        .frame(height: 52)
+        .frame(height: 58)
         .background(Color.white)
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(AppColors.border, lineWidth: 1)
+                .stroke(Color(red: 0.90, green: 0.91, blue: 0.92), lineWidth: 1)
         )
     }
 
@@ -283,10 +303,10 @@ struct DepartureSetupView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
-        .background(Color(red: 0.90, green: 0.98, blue: 0.93))
+        .background(Color(red: 0.94, green: 0.99, blue: 0.96))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color(red: 0.62, green: 0.90, blue: 0.72), lineWidth: 1)
+                .stroke(Color(red: 0.73, green: 0.97, blue: 0.82), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }

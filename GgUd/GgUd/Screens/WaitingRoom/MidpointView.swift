@@ -145,11 +145,15 @@ struct MidpointView: View {
             connectStatusSocketIfPossible()
             restartStatusPollingIfNeeded()
         }
+        .onAppear {
+            NotificationCenter.default.post(name: Notification.Name("hideCustomTabBar"), object: nil)
+        }
         .onDisappear {
             tearDownMapLifecycle()
             statusPollingTask?.cancel()
             statusPollingTask = nil
             promiseRealtime.disconnect()
+            NotificationCenter.default.post(name: Notification.Name("showCustomTabBar"), object: nil)
         }
         .onReceive(promiseRealtime.$latestStatusEvent.compactMap { $0 }) { event in
             Task { await handleStatusEvent(event) }

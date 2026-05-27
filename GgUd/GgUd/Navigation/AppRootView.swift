@@ -19,6 +19,8 @@ struct AppRootView: View {
     @State private var historyPath = NavigationPath()
     @State private var mypagePath = NavigationPath()
     @State private var rootResetID = UUID()
+    @State private var isCustomTabBarHidden = false
+    @State private var customTabBarHideDepth = 0
     @EnvironmentObject private var userSession: UserSessionStore
     @State private var didSyncMyInfo = false
 
@@ -46,10 +48,12 @@ struct AppRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .safeAreaInset(edge: .bottom) {
-                    CustomTabBar(selected: $selected) { _ in
-                        homePath = NavigationPath()
-                        historyPath = NavigationPath()
-                        mypagePath = NavigationPath()
+                    if !isCustomTabBarHidden {
+                        CustomTabBar(selected: $selected) { _ in
+                            homePath = NavigationPath()
+                            historyPath = NavigationPath()
+                            mypagePath = NavigationPath()
+                        }
                     }
                 }
                 .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -93,7 +97,17 @@ struct AppRootView: View {
                 historyPath = NavigationPath()
                 mypagePath = NavigationPath()
                 rootResetID = UUID()
+                customTabBarHideDepth = 0
+                isCustomTabBarHidden = false
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("hideCustomTabBar"))) { _ in
+            customTabBarHideDepth += 1
+            isCustomTabBarHidden = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("showCustomTabBar"))) { _ in
+            customTabBarHideDepth = max(0, customTabBarHideDepth - 1)
+            isCustomTabBarHidden = customTabBarHideDepth > 0
         }
     }
 

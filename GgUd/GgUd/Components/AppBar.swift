@@ -10,11 +10,13 @@ struct AppBar: View {
     let title: String
     let subtitle: String?
     let onBack: () -> Void
+    let onHome: (() -> Void)?
 
-    init(title: String, subtitle: String? = nil, onBack: @escaping () -> Void) {
+    init(title: String, subtitle: String? = nil, onBack: @escaping () -> Void, onHome: (() -> Void)? = nil) {
         self.title = title
         self.subtitle = subtitle
         self.onBack = onBack
+        self.onHome = onHome
     }
 
     private enum A {
@@ -29,10 +31,12 @@ struct AppBar: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Button(action: onBack) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .semibold))
+                    Image("BackNavIcon")
+                        .renderingMode(.original)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 14, height: 13)
                         .frame(width: 24, height: 24)
-                        .foregroundStyle(Color.primary)
                 }
                 .buttonStyle(.plain)
 
@@ -49,6 +53,18 @@ struct AppBar: View {
                 }
 
                 Spacer()
+
+                if let onHome {
+                    Button(action: onHome) {
+                        Image("HomeNavIcon")
+                            .renderingMode(.original)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 17, height: 18)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.top, A.padTop)
             .padding(.horizontal, A.padH)
