@@ -5,7 +5,6 @@
 
 import SwiftUI
 import CoreLocation
-import MapKit
 #if canImport(KakaoMapsSDK)
 import KakaoMapsSDK
 #endif
@@ -62,6 +61,7 @@ struct MidpointView: View {
     @State private var stage: MidpointStage = .midpoint
     @State private var selectedPlaceTab: PlaceCategoryTab = .all
     @State private var selectedMidpointTitle: String?
+    @State private var currentMidpointFallbackTitle: String?
     @State private var isShowingAIModal = false
     @State private var aiPromptText = ""
     @State private var selectedAIQuery: String?
@@ -69,6 +69,10 @@ struct MidpointView: View {
     @State private var isCurrentUserHost: Bool = false
     @State private var statusPollingTask: Task<Void, Never>?
     @State private var hasTriggeredReturnHome = false
+    @State private var isShowingInfoCard = true
+    @State private var infoCardHideTask: Task<Void, Never>?
+    @State private var mapZoomLevel: Int = 11
+    @State private var selectedFinalPlaceKeys: [String] = []
 
     @State private var participants: [MarkerItem] = []
     @State private var recommendations: [PlaceItem] = []
@@ -99,10 +103,11 @@ struct MidpointView: View {
                             .frame(width: proxy.size.width, height: proxy.size.height)
 
                         VStack(spacing: 0) {
-                            if stage == .midpoint {
+                            if stage == .midpoint, isShowingInfoCard {
                                 infoCard
                                     .padding(.top, 12)
                                     .padding(.horizontal, 24)
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
                             }
 
                             Spacer()
@@ -141,6 +146,7 @@ struct MidpointView: View {
         .toolbar(.hidden, for: .tabBar)
         .task(id: promiseId) {
             prepareMapLifecycle()
+            scheduleInfoCardAutoHide()
             await loadMidpointData()
             connectStatusSocketIfPossible()
             restartStatusPollingIfNeeded()
@@ -152,11 +158,22 @@ struct MidpointView: View {
             tearDownMapLifecycle()
             statusPollingTask?.cancel()
             statusPollingTask = nil
+            infoCardHideTask?.cancel()
             promiseRealtime.disconnect()
             NotificationCenter.default.post(name: Notification.Name("showCustomTabBar"), object: nil)
         }
         .onReceive(promiseRealtime.$latestStatusEvent.compactMap { $0 }) { event in
             Task { await handleStatusEvent(event) }
+        }
+        .onChange(of: stage) { _, newValue in
+            if newValue == .midpoint {
+                scheduleInfoCardAutoHide()
+            } else {
+                infoCardHideTask?.cancel()
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isShowingInfoCard = false
+                }
+            }
         }
         .alert("중간지점", isPresented: $isShowingActionAlert) {
             Button("확인", role: .cancel) { }
@@ -167,43 +184,41 @@ struct MidpointView: View {
 
     private var topBar: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 0) {
-                Button(action: { dismiss() }) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(AppColors.text)
-                        .frame(width: 12, height: 12)
-                }
-                .buttonStyle(.plain)
-
+            HStack(alignment: .center, spacing: 12) {
                 if stage == .finalPlace {
-                    HStack(alignment: .center, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("장소 추천")
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundStyle(AppColors.text)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("장소 추천")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(AppColors.text)
 
-                            HStack(spacing: 6) {
-                                Text(selectedMidpointTitle ?? "선택된 중간지점")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(AppColors.subText)
-                                    .lineLimit(1)
+                        HStack(spacing: 6) {
+                            Text(selectedMidpointDisplayText)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(AppColors.subText)
+                                .lineLimit(1)
 
-                                Button(action: {
-                                    Task { await changeMidpointSelection() }
-                                }) {
-                                    Text("변경")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(AppColors.primary)
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(isLoading || isSubmittingSelection)
-                                .opacity((isLoading || isSubmittingSelection) ? 0.6 : 1)
+                            Button(action: {
+                                Task { await changeMidpointSelection() }
+                            }) {
+                                Text("변경")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(AppColors.primary)
                             }
+                            .buttonStyle(.plain)
+                            .disabled(isLoading || isSubmittingSelection)
+                            .opacity((isLoading || isSubmittingSelection) ? 0.6 : 1)
                         }
+                    }
+                } else {
+                    Text("중간지점 결과")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(AppColors.text)
+                }
 
-                        Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
+                HStack(spacing: 12) {
+                    if stage == .finalPlace {
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 isShowingAIModal = true
@@ -212,32 +227,32 @@ struct MidpointView: View {
                             ZStack {
                                 Circle()
                                     .fill(Color(red: 0.16, green: 0.80, blue: 0.54))
-                                    .frame(width: 56, height: 56)
-                                    .shadow(color: Color.black.opacity(0.14), radius: 12, x: 0, y: 8)
+                                    .frame(width: 44, height: 44)
+                                    .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 5)
 
                                 Text("AI")
-                                    .font(.system(size: 22, weight: .bold))
+                                    .font(.system(size: 16, weight: .bold))
                                     .foregroundStyle(.white)
                             }
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.leading, 20)
-                } else {
-                    Text("중간지점 결과")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(AppColors.text)
-                        .padding(.leading, 20)
 
-                    Spacer(minLength: 0)
+                    Button(action: returnHomeFromTopBar) {
+                        Image("HomeNavIcon")
+                            .renderingMode(.original)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 17, height: 18)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-            .padding(.leading, 24)
             .padding(.top, 16)
-            .padding(.trailing, 24)
+            .padding(.horizontal, 24)
             .padding(.bottom, 17)
-            .frame(height: 89, alignment: .center)
+            .frame(height: 69)
 
             Rectangle()
                 .fill(AppColors.border)
@@ -246,20 +261,24 @@ struct MidpointView: View {
         .background(Color.white)
     }
 
+    private var selectedMidpointDisplayText: String {
+        if let selectedMidpointTitle, !selectedMidpointTitle.isEmpty {
+            return selectedMidpointTitle
+        }
+        if let fallback = currentMidpointFallbackTitle, !fallback.isEmpty {
+            return fallback
+        }
+        return "선택된 중간지점"
+    }
+
     private var mapPlaceholder: some View {
         GeometryReader { geo in
             ZStack {
-#if targetEnvironment(simulator)
-                SimulatorMidpointMapView(
-                    centerCoordinate: mapCenterCoordinate ?? locationManager.coordinate,
-                    participants: participants,
-                    recommendations: mapRecommendationMarkers
-                )
-                .frame(width: geo.size.width, height: geo.size.height)
-#elseif canImport(KakaoMapsSDK)
+#if canImport(KakaoMapsSDK)
                 KakaoMidpointMapView(
                     draw: $shouldDrawMap,
                     centerCoordinate: mapCenterCoordinate ?? locationManager.coordinate,
+                    zoomLevel: mapZoomLevel,
                     participants: participants,
                     recommendations: mapRecommendationMarkers
                 )
@@ -277,19 +296,15 @@ struct MidpointView: View {
         DispatchQueue.main.async {
             locationManager.requestCurrentLocation()
         }
-#if !targetEnvironment(simulator)
         DispatchQueue.main.async {
             shouldDrawMap = true
         }
-#endif
     }
 
     private func tearDownMapLifecycle() {
-#if !targetEnvironment(simulator)
         DispatchQueue.main.async {
             shouldDrawMap = false
         }
-#endif
     }
 
     private var aiRecommendationModal: some View {
@@ -543,18 +558,6 @@ struct MidpointView: View {
 
                 Spacer()
 
-                if stage == .midpoint, !recommendations.isEmpty {
-                    Button(action: {
-                        Task { await resetMidpointSelection() }
-                    }) {
-                        Text("초기화")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(AppColors.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isLoading || isSubmittingSelection)
-                    .opacity((isLoading || isSubmittingSelection) ? 0.5 : 1)
-                }
             }
             .padding(.leading, stage == .finalPlace ? 30 : 24)
             .padding(.trailing, 24)
@@ -613,21 +616,53 @@ struct MidpointView: View {
     }
 
     private var finalPlaceListView: some View {
-        ScrollView(showsIndicators: false) {
-            LazyVStack(spacing: 14) {
-                if finalPlaceRecommendations.isEmpty {
-                    Text("추천된 장소가 아직 없습니다")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(AppColors.subText)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 24)
-                } else {
-                    ForEach(finalPlaceRecommendations) { item in
-                        finalPlaceCard(item)
+        VStack(spacing: 14) {
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: 14) {
+                    if finalPlaceRecommendations.isEmpty {
+                        Text("추천된 장소가 아직 없습니다")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(AppColors.subText)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 24)
+                    } else {
+                        ForEach(finalPlaceRecommendations) { item in
+                            finalPlaceCard(item)
+                        }
                     }
                 }
+                .padding(.bottom, 12)
             }
-            .padding(.bottom, 28)
+
+            if !finalPlaceRecommendations.isEmpty {
+                Button(action: {
+                    Task { await confirmSelectedFinalPlaces() }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 15, weight: .bold))
+                        Text("\(selectedFinalPlaceKeys.count)개 장소로 약속 확정하기")
+                            .font(.system(size: 17, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(
+                        LinearGradient(
+                            colors: selectedFinalPlaceKeys.isEmpty || isSubmittingSelection
+                                ? [Color(red: 0.70, green: 0.82, blue: 0.98), Color(red: 0.62, green: 0.77, blue: 0.97)]
+                                : [Color(red: 0.18, green: 0.62, blue: 0.98), Color(red: 0.23, green: 0.51, blue: 0.96)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedFinalPlaceKeys.isEmpty || isSubmittingSelection)
+                .opacity((selectedFinalPlaceKeys.isEmpty || isSubmittingSelection) ? 0.75 : 1)
+                .padding(.bottom, 12)
+            }
         }
     }
 
@@ -654,111 +689,146 @@ struct MidpointView: View {
     }
 
     private func midpointCard(_ item: PlaceItem) -> some View {
-        Button(action: {
-            Task { await confirmRecommendedMidpoint(item) }
-        }) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(AppColors.text)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.title)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(AppColors.text)
 
-                    Text(item.subtitle)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(AppColors.subText)
+                Text(item.subtitle)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(AppColors.subText)
 
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(AppColors.primary)
-                        Text(item.timeText)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(AppColors.primary)
-                    }
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AppColors.primary)
+                    Text(item.timeText)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AppColors.primary)
                 }
+            }
 
-                Spacer()
+            Spacer()
 
+            Button(action: {
+                Task { await confirmRecommendedMidpoint(item) }
+            }) {
                 trailingCircleArrow
             }
-            .padding(14)
-            .background(Color(red: 0.97, green: 0.98, blue: 0.99))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(AppColors.border, lineWidth: 1)
-            )
+            .buttonStyle(.plain)
+            .disabled(isSubmittingSelection || item.stationId == nil || !isCurrentUserHost)
+            .opacity((isSubmittingSelection || item.stationId == nil || !isCurrentUserHost) ? 0.65 : 1)
         }
-        .buttonStyle(.plain)
-        .disabled(isSubmittingSelection || item.stationId == nil || !isCurrentUserHost)
-        .opacity((isSubmittingSelection || item.stationId == nil || !isCurrentUserHost) ? 0.65 : 1)
+        .padding(14)
+        .background(Color(red: 0.97, green: 0.98, blue: 0.99))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AppColors.border, lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .onTapGesture {
+            focusMap(on: item.coordinate)
+        }
+    }
+
+    private func finalPlaceSelectionKey(for item: FinalPlaceItem) -> String {
+        if let placeId = item.placeId, !placeId.isEmpty {
+            return placeId
+        }
+        return "\(item.title)|\(item.address)"
+    }
+
+    private func isFinalPlaceSelected(_ item: FinalPlaceItem) -> Bool {
+        selectedFinalPlaceKeys.contains(finalPlaceSelectionKey(for: item))
+    }
+
+    private func toggleFinalPlaceSelection(_ item: FinalPlaceItem) {
+        let key = finalPlaceSelectionKey(for: item)
+        if let index = selectedFinalPlaceKeys.firstIndex(of: key) {
+            selectedFinalPlaceKeys.remove(at: index)
+        } else {
+            selectedFinalPlaceKeys.append(key)
+        }
     }
 
     private func finalPlaceCard(_ item: FinalPlaceItem) -> some View {
-        Button(action: {
-            Task { await confirmFinalPlaceSelection(item) }
-        }) {
-            HStack(alignment: .top, spacing: 16) {
-                placeThumbnail(for: item)
+        let isSelected = isFinalPlaceSelected(item)
 
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(item.title)
-                                .font(.system(size: 17, weight: .bold))
-                                .foregroundStyle(AppColors.text)
+        return HStack(alignment: .top, spacing: 14) {
+            placeThumbnail(for: item)
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(item.title)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(AppColors.text)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(2)
+
+                        if !item.summary.isEmpty {
+                            Text(item.summary)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(AppColors.subText)
                                 .multilineTextAlignment(.leading)
                                 .lineLimit(2)
+                        }
+                    }
 
-                            if !item.summary.isEmpty {
-                                Text(item.summary)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(AppColors.subText)
-                                    .multilineTextAlignment(.leading)
-                                    .lineLimit(2)
+                    Spacer(minLength: 0)
+
+                    Button(action: {
+                        toggleFinalPlaceSelection(item)
+                    }) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(isSelected ? Color(red: 0.13, green: 0.78, blue: 0.44) : Color(red: 0.13, green: 0.78, blue: 0.44))
+                                .frame(width: 24, height: 24)
+
+                            if isSelected {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.white)
+                            } else {
+                                Image(systemName: "mappin.and.ellipse")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.white)
                             }
                         }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isSubmittingSelection || item.coordinate == nil)
+                    .opacity((isSubmittingSelection || item.coordinate == nil) ? 0.65 : 1)
+                }
 
-                        Spacer(minLength: 0)
-
-                        RecommendationLocationIcon()
-                            .frame(width: 24, height: 24)
+                HStack(alignment: .center, spacing: 12) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "figure.walk")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AppColors.primary)
+                        Text(item.walkTimeText)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(AppColors.primary)
                     }
 
-                    HStack(alignment: .center, spacing: 12) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "star.fill")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(Color(red: 0.98, green: 0.79, blue: 0.14))
-                            Text(item.scoreText)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(AppColors.text)
-                        }
-
-                        HStack(spacing: 4) {
-                            Image(systemName: "figure.walk")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppColors.primary)
-                            Text(item.walkTimeText)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(AppColors.primary)
-                        }
-
-                        Spacer(minLength: 0)
-                    }
+                    Spacer(minLength: 0)
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 18)
-            .background(Color(red: 0.976, green: 0.98, blue: 0.984))
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Color(red: 0.898, green: 0.906, blue: 0.922), lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
-        .disabled(isSubmittingSelection || item.coordinate == nil)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(Color(red: 0.976, green: 0.98, blue: 0.984))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(isSelected ? AppColors.primary : Color(red: 0.898, green: 0.906, blue: 0.922), lineWidth: isSelected ? 2 : 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .onTapGesture {
+            focusFinalPlaceMap(on: item.coordinate)
+        }
         .opacity((isSubmittingSelection || item.coordinate == nil) ? 0.65 : 1)
     }
 
@@ -782,14 +852,14 @@ struct MidpointView: View {
                             )
                     }
                 }
-                .frame(width: 104, height: 104)
+                .frame(width: 88, height: 88)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             )
         } else {
             return AnyView(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color(red: 0.95, green: 0.96, blue: 0.98))
-                    .frame(width: 104, height: 104)
+                    .frame(width: 88, height: 88)
                     .overlay(
                         Image(systemName: "fork.knife")
                             .font(.system(size: 22, weight: .bold))
@@ -817,268 +887,66 @@ struct MidpointView: View {
             }
         }
     }
-}
 
-private struct MarkerItem: Identifiable {
-    let id = UUID()
-    let title: String
-    let icon: String
-    let color: Color
-    let coordinate: CLLocationCoordinate2D?
-    let profileImageURL: String?
-    let profileImageData: Data?
-}
 
-private struct PlaceItem: Identifiable {
-    let id = UUID()
-    let stationId: Int64?
-    let title: String
-    let subtitle: String
-    let timeText: String
-    let coordinate: CLLocationCoordinate2D?
-}
-
-private struct RecommendationLocationIcon: View {
-    var body: some View {
-        Image("RecommendationLocationBadge")
-            .resizable()
-            .interpolation(.high)
-            .antialiased(true)
-            .aspectRatio(1, contentMode: .fit)
-            .frame(width: 24, height: 24)
-    }
-}
-
-private struct FinalPlaceItem: Identifiable {
-    let id = UUID()
-    let placeId: String?
-    let title: String
-    let address: String
-    let summary: String
-    let imageURL: String?
-    let scoreText: String
-    let walkTimeText: String
-    let categoryText: String
-    let coordinate: CLLocationCoordinate2D?
-}
-
-private struct SimulatorMidpointMapView: UIViewRepresentable {
-    let centerCoordinate: CLLocationCoordinate2D?
-    let participants: [MarkerItem]
-    let recommendations: [PlaceItem]
-
-    func makeUIView(context: Context) -> MKMapView {
-        let mapView = MKMapView(frame: .zero)
-        mapView.delegate = context.coordinator
-        mapView.showsCompass = false
-        mapView.pointOfInterestFilter = .excludingAll
-        return mapView
-    }
-
-    func updateUIView(_ mapView: MKMapView, context: Context) {
-        let annotations = participantAnnotations + recommendationAnnotations
-        let existing = mapView.annotations.compactMap { $0 as? SimulatorAnnotation }
-        mapView.removeAnnotations(existing)
-        mapView.addAnnotations(annotations)
-
-        let nextCenter = centerCoordinate ?? annotations.first?.coordinate
-        guard let nextCenter else { return }
-        guard nextCenter.latitude.isFinite, nextCenter.longitude.isFinite else { return }
-
-        let span = MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
-        let region = MKCoordinateRegion(center: nextCenter, span: span)
-        mapView.setRegion(region, animated: false)
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    private var participantAnnotations: [SimulatorAnnotation] {
-        participants.compactMap { item in
-            guard let coordinate = item.coordinate else { return nil }
-            return SimulatorAnnotation(
-                title: item.title,
-                coordinate: coordinate,
-                tintColor: UIColor(item.color),
-                glyphSystemImage: "person.fill",
-                profileImageURL: item.profileImageURL,
-                profileImageData: item.profileImageData,
-                kind: .participant
-            )
+    private func scheduleInfoCardAutoHide() {
+        infoCardHideTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isShowingInfoCard = true
         }
-    }
-
-    private var recommendationAnnotations: [SimulatorAnnotation] {
-        recommendations.compactMap { item in
-            guard let coordinate = item.coordinate else { return nil }
-            return SimulatorAnnotation(
-                title: item.title,
-                coordinate: coordinate,
-                tintColor: UIColor(red: 0.22, green: 0.62, blue: 0.96, alpha: 1),
-                glyphSystemImage: "mappin.circle.fill",
-                profileImageURL: nil,
-                profileImageData: nil,
-                kind: .recommendation
-            )
-        }
-    }
-
-    final class Coordinator: NSObject, MKMapViewDelegate {
-        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            guard let annotation = annotation as? SimulatorAnnotation else { return nil }
-
-            let identifier = "SimulatorAnnotationView"
-            let view = (mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MidpointAvatarAnnotationView) ?? MidpointAvatarAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-            view.annotation = annotation
-            view.canShowCallout = false
-
-            switch annotation.kind {
-            case .participant:
-                view.image = nil
-                view.avatarImageView.isHidden = false
-                view.configure(
-                    profileImageURL: annotation.profileImageURL,
-                    profileImageData: annotation.profileImageData,
-                    tint: annotation.tintColor
-                )
-                view.centerOffset = CGPoint(x: 0, y: -4)
-            case .recommendation:
-                view.avatarImageView.isHidden = true
-                view.image = midpointPinImage(tint: annotation.tintColor, symbolName: annotation.glyphSystemImage, size: 44, symbolSize: 18)
-                view.centerOffset = CGPoint(x: 0, y: -4)
-            }
-
-            return view
-        }
-
-        private func midpointPinImage(tint: UIColor, symbolName: String, size: CGFloat, symbolSize: CGFloat) -> UIImage? {
-            let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-            return renderer.image { _ in
-                let rect = CGRect(origin: .zero, size: CGSize(width: size, height: size))
-                tint.setFill()
-                UIBezierPath(ovalIn: rect).fill()
-
-                let symbolConfig = UIImage.SymbolConfiguration(pointSize: symbolSize, weight: .bold)
-                let symbol = UIImage(systemName: symbolName, withConfiguration: symbolConfig)?.withTintColor(.white, renderingMode: .alwaysOriginal)
-                let symbolRect = CGRect(x: (size - symbolSize) / 2, y: (size - symbolSize) / 2, width: symbolSize, height: symbolSize)
-                symbol?.draw(in: symbolRect)
+        infoCardHideTask = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    isShowingInfoCard = false
+                }
             }
         }
     }
-}
 
-private final class SimulatorAnnotation: NSObject, MKAnnotation {
-    enum Kind {
-        case participant
-        case recommendation
-    }
+    private func loadRemoteProfileImageDataMap(urls: [String]) async -> [String: Data] {
+        let uniqueURLs = Array(Set(urls.filter { !$0.isEmpty }))
+        guard !uniqueURLs.isEmpty else { return [:] }
 
-    let title: String?
-    let coordinate: CLLocationCoordinate2D
-    let tintColor: UIColor
-    let glyphSystemImage: String
-    let profileImageURL: String?
-    let profileImageData: Data?
-    let kind: Kind
-
-    init(title: String, coordinate: CLLocationCoordinate2D, tintColor: UIColor, glyphSystemImage: String, profileImageURL: String?, profileImageData: Data?, kind: Kind) {
-        self.title = title
-        self.coordinate = coordinate
-        self.tintColor = tintColor
-        self.glyphSystemImage = glyphSystemImage
-        self.profileImageURL = profileImageURL
-        self.profileImageData = profileImageData
-        self.kind = kind
-    }
-}
-
-private final class MidpointAvatarAnnotationView: MKAnnotationView {
-    let avatarImageView = UIImageView()
-    private var imageTask: URLSessionDataTask?
-
-    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
-        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
-        setup()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setup()
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        imageTask?.cancel()
-        avatarImageView.image = nil
-        avatarImageView.backgroundColor = .systemBlue
-    }
-
-    func configure(profileImageURL: String?, profileImageData: Data?, tint: UIColor) {
-        imageTask?.cancel()
-        avatarImageView.backgroundColor = tint
-
-        if let profileImageData, let image = UIImage(data: profileImageData) {
-            avatarImageView.image = image
-            return
-        }
-
-        guard let profileImageURL, let url = URL(string: profileImageURL) else {
-            avatarImageView.image = Self.placeholderImage()
-            return
-        }
-
-        avatarImageView.image = Self.placeholderImage()
-        imageTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let self, let data, let image = UIImage(data: data) else { return }
-            DispatchQueue.main.async {
-                self.avatarImageView.image = image
+        return await withTaskGroup(of: (String, Data?).self) { group in
+            for urlString in uniqueURLs {
+                group.addTask {
+                    guard let url = URL(string: urlString) else { return (urlString, nil) }
+                    do {
+                        let (data, response) = try await URLSession.shared.data(from: url)
+                        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                        guard (200...299).contains(statusCode), !data.isEmpty else {
+                            return (urlString, nil)
+                        }
+                        return (urlString, data)
+                    } catch {
+                        return (urlString, nil)
+                    }
+                }
             }
-        }
-        imageTask?.resume()
-    }
 
-    private func setup() {
-        frame = CGRect(x: 0, y: 0, width: 50, height: 50)
-        centerOffset = CGPoint(x: 0, y: -4)
-
-        avatarImageView.frame = bounds
-        avatarImageView.contentMode = .scaleAspectFill
-        avatarImageView.clipsToBounds = true
-        avatarImageView.layer.cornerRadius = bounds.width / 2
-        avatarImageView.layer.borderWidth = 3
-        avatarImageView.layer.borderColor = UIColor.white.cgColor
-        avatarImageView.layer.shadowColor = UIColor.black.withAlphaComponent(0.16).cgColor
-        avatarImageView.layer.shadowOpacity = 1
-        avatarImageView.layer.shadowRadius = 8
-        avatarImageView.layer.shadowOffset = CGSize(width: 0, height: 4)
-        avatarImageView.backgroundColor = .systemBlue
-        avatarImageView.image = Self.placeholderImage()
-        addSubview(avatarImageView)
-    }
-
-    private static func placeholderImage() -> UIImage? {
-        let size = CGSize(width: 50, height: 50)
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in
-            UIColor.systemBlue.setFill()
-            UIBezierPath(ovalIn: CGRect(origin: .zero, size: size)).fill()
-
-            let symbolConfig = UIImage.SymbolConfiguration(pointSize: 18, weight: .bold)
-            let symbol = UIImage(systemName: "person.fill", withConfiguration: symbolConfig)?
-                .withTintColor(.white, renderingMode: .alwaysOriginal)
-            symbol?.draw(in: CGRect(x: 16, y: 14, width: 18, height: 18))
+            var resolved: [String: Data] = [:]
+            for await (urlString, data) in group {
+                if let data {
+                    resolved[urlString] = data
+                }
+            }
+            return resolved
         }
     }
-}
 
-#Preview {
-    MidpointView(promiseId: 0)
-        .environmentObject(UserSessionStore())
-}
+    private func currentUserProfileImageURL(for userId: Int64?) -> String? {
+        guard let userId, userId == userSession.kakaoUserId else { return nil }
+        return userSession.profileImageURL
+    }
 
-private extension MidpointView {
-    var mapRecommendationMarkers: [PlaceItem] {
+    private func currentUserProfileImageData(for userId: Int64?) -> Data? {
+        guard let userId, userId == userSession.kakaoUserId else { return nil }
+        return userSession.profileImageData
+    }
+
+    private var mapRecommendationMarkers: [PlaceItem] {
         switch stage {
         case .midpoint:
             return recommendations
@@ -1154,18 +1022,26 @@ private extension MidpointView {
                 participant.userId == userSession.kakaoUserId && (participant.host ?? false)
             }
 
+            let remoteProfileImageDataByURL = await loadRemoteProfileImageDataMap(
+                urls: serverParticipants.compactMap { participant in
+                    participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId)
+                }
+            )
+
             participants = serverParticipants.enumerated().compactMap { index, participant in
                 guard let lat = participant.departureLatitude,
                       let lon = participant.departureLongitude else { return nil }
 
                 let resolvedUserId = participant.userId
+                let profileImageURL = participant.profileImageUrl ?? currentUserProfileImageURL(for: resolvedUserId)
                 return MarkerItem(
+                    userId: resolvedUserId,
                     title: participant.nickname ?? "사용자",
                     icon: "person.fill",
                     color: palette[index % palette.count],
                     coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
-                    profileImageURL: participant.profileImageUrl,
-                    profileImageData: resolvedUserId == userSession.kakaoUserId ? userSession.profileImageData : nil
+                    profileImageURL: profileImageURL,
+                    profileImageData: currentUserProfileImageData(for: resolvedUserId) ?? remoteProfileImageDataByURL[profileImageURL ?? ""]
                 )
             }
         case let .failure(error):
@@ -1223,6 +1099,7 @@ private extension MidpointView {
         switch mapDataResult {
         case let .success(mapData):
             latestMapData = mapData
+            currentMidpointFallbackTitle = mapData.recommendedMidpoints?.first?.name
             applyMapData(mapData)
         case .failure:
             break
@@ -1238,6 +1115,8 @@ private extension MidpointView {
 
         if effectiveStatus == "MIDPOINT_CONFIRMED" {
             selectedMidpointTitle = latestMapData?.recommendedMidpoints?.first?.name
+            currentMidpointFallbackTitle = latestMapData?.recommendedMidpoints?.first?.name
+            currentMidpointFallbackTitle = latestMapData?.recommendedMidpoints?.first?.name
             isLoading = false
             await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: selectedAIQuery)
             return
@@ -1283,8 +1162,10 @@ private extension MidpointView {
                let lat = midpoint.latitude,
                let lon = midpoint.longitude {
                 mapCenterCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                mapZoomLevel = 12
             } else if mapCenterCoordinate == nil {
                 mapCenterCoordinate = averageCenterCoordinate()
+                mapZoomLevel = 12
             }
         case let .failure(error):
             if loadError == nil {
@@ -1293,6 +1174,7 @@ private extension MidpointView {
             recommendations = []
             if mapCenterCoordinate == nil {
                 mapCenterCoordinate = averageCenterCoordinate()
+                mapZoomLevel = 12
             }
         }
 
@@ -1322,7 +1204,7 @@ private extension MidpointView {
         return statusPriority(normalizedIncoming) >= statusPriority(existing) ? normalizedIncoming : existing
     }
 
-    func localizedCategory(_ raw: String?) -> String {
+    private func localizedCategory(_ raw: String?) -> String {
         guard let raw else { return "추천" }
         let lower = raw.lowercased()
         if lower.contains("cafe") || lower.contains("coffee") { return "카페" }
@@ -1331,7 +1213,7 @@ private extension MidpointView {
         return raw
     }
 
-    func averageCenterCoordinate() -> CLLocationCoordinate2D? {
+    private func averageCenterCoordinate() -> CLLocationCoordinate2D? {
         let coords = participants.compactMap(\.coordinate)
         guard !coords.isEmpty else { return nil }
         let avgLat = coords.map(\.latitude).reduce(0, +) / Double(coords.count)
@@ -1339,18 +1221,39 @@ private extension MidpointView {
         return CLLocationCoordinate2D(latitude: avgLat, longitude: avgLon)
     }
 
-    func applyMapData(_ mapData: PromiseMapDataResponse) {
+    private func focusMap(on coordinate: CLLocationCoordinate2D?) {
+        guard let coordinate else { return }
+        mapCenterCoordinate = CLLocationCoordinate2D(
+            latitude: coordinate.latitude - 0.0075,
+            longitude: coordinate.longitude
+        )
+        mapZoomLevel = 14
+    }
+
+    private func focusFinalPlaceMap(on coordinate: CLLocationCoordinate2D?) {
+        guard let coordinate else { return }
+        mapCenterCoordinate = CLLocationCoordinate2D(
+            latitude: coordinate.latitude - 0.0045,
+            longitude: coordinate.longitude
+        )
+        mapZoomLevel = 14
+    }
+
+    private func applyMapData(_ mapData: PromiseMapDataResponse) {
         if stage == .finalPlace,
            let destination = mapData.destination,
            let lat = destination.latitude,
            let lon = destination.longitude {
             mapCenterCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            mapZoomLevel = 12
         } else if let midpoint = (mapData.recommendedMidpoints ?? []).first,
                   let lat = midpoint.latitude,
                   let lon = midpoint.longitude {
             mapCenterCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            mapZoomLevel = 12
         } else if mapCenterCoordinate == nil {
             mapCenterCoordinate = averageCenterCoordinate()
+            mapZoomLevel = 12
         }
     }
 
@@ -1455,6 +1358,11 @@ private extension MidpointView {
         }
     }
 
+    private func returnHomeFromTopBar() {
+        NotificationCenter.default.post(name: Notification.Name("waitingRoomShouldReturnHome"), object: nil)
+        dismiss()
+    }
+
     @MainActor
     private func returnHomeImmediatelyAfterPlaceConfirmed(source: String) {
         guard !hasTriggeredReturnHome else { return }
@@ -1495,7 +1403,7 @@ private extension MidpointView {
     }
 
     @MainActor
-    func confirmRecommendedMidpoint(_ item: PlaceItem) async {
+    private func confirmRecommendedMidpoint(_ item: PlaceItem) async {
         guard !isSubmittingSelection else { return }
         guard let stationId = item.stationId else {
             actionMessage = "확정할 수 있는 역 정보가 없어요."
@@ -1535,7 +1443,44 @@ private extension MidpointView {
     }
 
     @MainActor
-    func loadFinalPlaceRecommendations(tab: PlaceCategoryTab, query: String? = nil) async {
+    private func requestFinalPlaceRecommendations(tab: PlaceCategoryTab, query: String? = nil) async -> Result<PlaceRecommendationResponse, Error> {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            return .failure(AuthAPIError.server(statusCode: 401, message: "로그인 정보가 없습니다."))
+        }
+
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+        let maxAttempts = 3
+        for attempt in 1...maxAttempts {
+            let result: Result<PlaceRecommendationResponse, Error> = await withCheckedContinuation { continuation in
+                PromiseAPIClient.shared.getPlaceRecommendations(
+                    promiseId: promiseId,
+                    accessToken: accessToken,
+                    tokenType: tokenType,
+                    query: query,
+                    tab: tab.rawValue
+                ) { result in
+                    continuation.resume(returning: result)
+                }
+            }
+
+            switch result {
+            case .success:
+                return result
+            case let .failure(error):
+                if case let AuthAPIError.server(statusCode, _) = error, statusCode == 504, attempt < maxAttempts {
+                    let delay = UInt64(attempt) * 600_000_000
+                    try? await Task.sleep(nanoseconds: delay)
+                    continue
+                }
+                return result
+            }
+        }
+
+        return .failure(AuthAPIError.server(statusCode: 504, message: "장소 추천을 다시 불러오지 못했어요."))
+    }
+
+    @MainActor
+    private func loadFinalPlaceRecommendations(tab: PlaceCategoryTab, query: String? = nil) async {
         guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
             isSubmittingSelection = false
             actionMessage = "로그인 정보가 없습니다."
@@ -1547,17 +1492,7 @@ private extension MidpointView {
         loadError = nil
 
         let tokenType = userSession.backendTokenType ?? "Bearer"
-        let result: Result<PlaceRecommendationResponse, Error> = await withCheckedContinuation { continuation in
-            PromiseAPIClient.shared.getPlaceRecommendations(
-                promiseId: promiseId,
-                accessToken: accessToken,
-                tokenType: tokenType,
-                query: query,
-                tab: tab.rawValue
-            ) { result in
-                continuation.resume(returning: result)
-            }
-        }
+        let result = await requestFinalPlaceRecommendations(tab: tab, query: query)
 
         isLoading = false
         isSubmittingSelection = false
@@ -1591,14 +1526,19 @@ private extension MidpointView {
                 )
             }
             stage = .finalPlace
+            let availableKeys = Set(finalPlaceRecommendations.map { finalPlaceSelectionKey(for: $0) })
+            selectedFinalPlaceKeys.removeAll { !availableKeys.contains($0) }
             await refreshMapDataForCurrentStage(accessToken: accessToken, tokenType: tokenType)
+            if let firstCoordinate = finalPlaceRecommendations.first?.coordinate {
+                focusFinalPlaceMap(on: firstCoordinate)
+            }
         case let .failure(error):
             actionMessage = error.localizedDescription
             isShowingActionAlert = true
         }
     }
 
-    func returnToMidpointSelection() {
+    private func returnToMidpointSelection() {
         stage = .midpoint
         isSheetExpanded = false
         isShowingAIModal = false
@@ -1613,13 +1553,13 @@ private extension MidpointView {
     }
 
     @MainActor
-    func changeMidpointSelection() async {
+    private func changeMidpointSelection() async {
         actionMessage = "현재 서버 상태에서는 중간지점을 다시 변경할 수 없어요. 새로운 약속에서 다시 선택해주세요."
         isShowingActionAlert = true
     }
 
     @MainActor
-    func requestAIRecommendations() async {
+    private func requestAIRecommendations() async {
         let trimmed = aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         selectedAIQuery = trimmed
@@ -1630,7 +1570,19 @@ private extension MidpointView {
     }
 
     @MainActor
-    func confirmFinalPlaceSelection(_ item: FinalPlaceItem) async {
+    private func confirmSelectedFinalPlaces() async {
+        guard let firstKey = selectedFinalPlaceKeys.first,
+              let representative = finalPlaceRecommendations.first(where: { finalPlaceSelectionKey(for: $0) == firstKey }) else {
+            actionMessage = "최종 확정할 장소를 먼저 선택해주세요."
+            isShowingActionAlert = true
+            return
+        }
+
+        await confirmFinalPlaceSelection(representative)
+    }
+
+    @MainActor
+    private func confirmFinalPlaceSelection(_ item: FinalPlaceItem) async {
         guard !isSubmittingSelection else { return }
         guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
             actionMessage = "로그인 정보가 없습니다."
@@ -1673,7 +1625,7 @@ private extension MidpointView {
     }
 
     @MainActor
-    func resetMidpointSelection() async {
+    private func resetMidpointSelection() async {
         guard !isSubmittingSelection else { return }
         guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
             actionMessage = "로그인 정보가 없습니다."
@@ -1708,10 +1660,55 @@ private extension MidpointView {
     }
 }
 
+private struct MarkerItem: Identifiable {
+    let id = UUID()
+    let userId: Int64?
+    let title: String
+    let icon: String
+    let color: Color
+    let coordinate: CLLocationCoordinate2D?
+    let profileImageURL: String?
+    let profileImageData: Data?
+}
+
+private struct PlaceItem: Identifiable {
+    let id = UUID()
+    let stationId: Int64?
+    let title: String
+    let subtitle: String
+    let timeText: String
+    let coordinate: CLLocationCoordinate2D?
+}
+
+private struct RecommendationLocationIcon: View {
+    var body: some View {
+        Image("RecommendationLocationBadge")
+            .resizable()
+            .interpolation(.high)
+            .antialiased(true)
+            .aspectRatio(1, contentMode: .fit)
+            .frame(width: 24, height: 24)
+    }
+}
+
+private struct FinalPlaceItem: Identifiable {
+    let id = UUID()
+    let placeId: String?
+    let title: String
+    let address: String
+    let summary: String
+    let imageURL: String?
+    let scoreText: String
+    let walkTimeText: String
+    let categoryText: String
+    let coordinate: CLLocationCoordinate2D?
+}
+
 #if canImport(KakaoMapsSDK)
 private struct KakaoMidpointMapView: UIViewRepresentable {
     @Binding var draw: Bool
     let centerCoordinate: CLLocationCoordinate2D?
+    let zoomLevel: Int
     let participants: [MarkerItem]
     let recommendations: [PlaceItem]
 
@@ -1729,6 +1726,7 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
 
     func updateUIView(_ uiView: KMViewContainer, context: Context) {
         context.coordinator.latestCoordinate = centerCoordinate
+        context.coordinator.latestZoomLevel = zoomLevel
         context.coordinator.latestParticipants = participants
         context.coordinator.latestRecommendations = recommendations
 
@@ -1741,16 +1739,18 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
         }
 
         if draw {
-            context.coordinator.attachMapViewIfReady()
             context.coordinator.requestMapActivation()
+            context.coordinator.attachMapViewIfReady()
+            context.coordinator.moveCameraIfPossible()
             context.coordinator.syncMarkersIfPossible()
         } else {
+            context.coordinator.hasActivatedEngine = false
             context.coordinator.controller?.pauseEngine()
-            context.coordinator.controller?.resetEngine()
         }
     }
 
     static func dismantleUIView(_ uiView: KMViewContainer, coordinator: Coordinator) {
+        coordinator.hasActivatedEngine = false
         coordinator.controller?.pauseEngine()
         coordinator.controller?.resetEngine()
     }
@@ -1758,6 +1758,7 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
     final class Coordinator: NSObject, MapControllerDelegate {
         var controller: KMController?
         var latestCoordinate: CLLocationCoordinate2D?
+        var latestZoomLevel: Int = 7
         var latestParticipants: [MarkerItem] = []
         var latestRecommendations: [PlaceItem] = []
         var containerSize: CGSize = .zero
@@ -1766,6 +1767,10 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
         private var hasAuthenticated = false
         private var hasAddedMapView = false
         private var isAddingMapView = false
+        var hasActivatedEngine = false
+        private var lastCameraSignature: String?
+        private var lastParticipantSignature: String?
+        private var lastRecommendationSignature: String?
         private let participantLayerID = "midpoint_participants"
         private let recommendationLayerID = "midpoint_recommendations"
         private let recommendationStyleID = "midpoint_recommendation_style"
@@ -1824,7 +1829,10 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
                 defaultLevel: 7
             )
             let size = containerSize == .zero ? CGSize(width: 393, height: 852) : containerSize
-            controller.addView(mapviewInfo, viewSize: size)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let controller = self.controller else { return }
+                controller.addView(mapviewInfo, viewSize: size)
+            }
             print("[KakaoMap] addViews with size: \(size)")
             print("[KakaoMap] controller state after addViews: \(controller.getStateDescMessage())")
         }
@@ -1850,6 +1858,9 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
 
         func authenticationSucceeded() {
             hasAuthenticated = true
+            DispatchQueue.main.async { [weak self] in
+                self?.attachMapViewIfReady()
+            }
             print("[KakaoMap] authenticationSucceeded")
             print("[KakaoMap] controller state on auth success: \(controller?.getStateDescMessage() ?? "unknown")")
         }
@@ -1882,10 +1893,8 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
                 print("[KakaoMap] activation deferred: engine not prepared")
                 return
             }
-            guard hasAddedMapView else {
-                print("[KakaoMap] activation deferred: map view not added")
-                return
-            }
+            guard !hasActivatedEngine else { return }
+            hasActivatedEngine = true
             controller.activateEngine()
             print("[KakaoMap] activateEngine called")
             print("[KakaoMap] controller state after activate: \(controller.getStateDescMessage())")
@@ -1894,14 +1903,31 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
         func moveCameraIfPossible() {
             guard let mapView = controller?.getView("midpoint_mapview") as? KakaoMap else { return }
             let coordinate = latestCoordinate ?? CLLocationCoordinate2D(latitude: 37.4979, longitude: 127.0276)
+            let signature = String(format: "%.6f:%.6f:%d", coordinate.latitude, coordinate.longitude, latestZoomLevel)
+            guard lastCameraSignature != signature else { return }
+            lastCameraSignature = signature
             let target = MapPoint(longitude: coordinate.longitude, latitude: coordinate.latitude)
-            let cameraUpdate = CameraUpdate.make(target: target, zoomLevel: 10, mapView: mapView)
+            let cameraUpdate = CameraUpdate.make(target: target, zoomLevel: latestZoomLevel, mapView: mapView)
             mapView.moveCamera(cameraUpdate)
             print("[KakaoMap] moveCamera to: \(coordinate.latitude), \(coordinate.longitude)")
         }
 
         func syncMarkersIfPossible() {
             guard let mapView = controller?.getView("midpoint_mapview") as? KakaoMap else { return }
+
+            let participantSignature = latestParticipants.map {
+                let coordinateText = $0.coordinate.map { String(format: "%.6f:%.6f", $0.latitude, $0.longitude) } ?? "nil"
+                return "\($0.userId ?? -1):\(coordinateText):\($0.profileImageURL ?? "")"
+            }.joined(separator: "|")
+            let recommendationSignature = latestRecommendations.map {
+                let coordinateText = $0.coordinate.map { String(format: "%.6f:%.6f", $0.latitude, $0.longitude) } ?? "nil"
+                return "\($0.stationId ?? -1):\(coordinateText)"
+            }.joined(separator: "|")
+            guard participantSignature != lastParticipantSignature || recommendationSignature != lastRecommendationSignature else {
+                return
+            }
+            lastParticipantSignature = participantSignature
+            lastRecommendationSignature = recommendationSignature
 
             let labelManager = mapView.getLabelManager()
             guard let participantLayer = ensureLabelLayer(
@@ -1977,13 +2003,9 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
         }
 
         private func participantStyleID(for item: MarkerItem) -> String {
-            let color = UIColor(item.color)
-            var red: CGFloat = 0
-            var green: CGFloat = 0
-            var blue: CGFloat = 0
-            var alpha: CGFloat = 0
-            color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-            return "participant_\(Int(red * 255))_\(Int(green * 255))_\(Int(blue * 255))"
+            let identity = item.userId.map { "id_\($0)" } ?? item.title.replacingOccurrences(of: " ", with: "_")
+            let hasProfile = item.profileImageData != nil || item.profileImageURL != nil
+            return "participant_\(identity)_\(hasProfile ? "profile" : "placeholder")"
         }
 
         private func registerParticipantStyleIfNeeded(_ labelManager: LabelManager, item: MarkerItem, styleID: String) {
@@ -2018,8 +2040,8 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
                 symbol: makeCircularSymbolImage(
                     fill: UIColor(red: 0.22, green: 0.62, blue: 0.96, alpha: 1),
                     systemName: "mappin.circle.fill",
-                    size: CGSize(width: 44, height: 44),
-                    symbolPointSize: 18
+                    size: CGSize(width: 48, height: 48),
+                    symbolPointSize: 14
                 ),
                 anchorPoint: CGPoint(x: 0.5, y: 1.0)
             )
@@ -2029,52 +2051,116 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
         }
 
         private func makeParticipantMarkerImage(item: MarkerItem) -> UIImage? {
-            if let data = item.profileImageData, let image = UIImage(data: data) {
-                return circularAvatarImage(from: image, tint: UIColor(item.color))
+            if let data = item.profileImageData,
+               let image = UIImage(data: data),
+               let normalizedImage = normalizedMarkerSourceImage(from: image) {
+                return circularAvatarImage(from: normalizedImage, tint: UIColor(item.color))
             }
-            return makeCircularSymbolImage(
+            return makeAvatarPlaceholderImage(
                 fill: UIColor(item.color),
                 systemName: item.icon,
-                size: CGSize(width: 50, height: 50),
-                symbolPointSize: 18
+                size: CGSize(width: 48, height: 48),
+                symbolPointSize: 16
             )
         }
 
         private func circularAvatarImage(from image: UIImage, tint: UIColor) -> UIImage? {
-            let size = CGSize(width: 50, height: 50)
-            let renderer = UIGraphicsImageRenderer(size: size)
-            return renderer.image { _ in
-                let rect = CGRect(origin: .zero, size: size)
-                let path = UIBezierPath(ovalIn: rect)
-                path.addClip()
-                image.draw(in: rect)
+            let size = CGSize(width: 48, height: 48)
+            UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
+            defer { UIGraphicsEndImageContext() }
+            let rect = CGRect(origin: .zero, size: size)
+            let path = UIBezierPath(ovalIn: rect)
+            path.addClip()
+            image.draw(in: rect)
+            UIColor.white.setStroke()
+            path.lineWidth = 3
+            path.stroke()
+            guard let rendered = UIGraphicsGetImageFromCurrentImageContext() else { return nil }
+            return normalizedMarkerSourceImage(from: rendered) ?? rendered
+        }
 
-                UIColor.white.setStroke()
-                path.lineWidth = 3
-                path.stroke()
+        private func makeAvatarPlaceholderImage(fill: UIColor, systemName: String, size: CGSize, symbolPointSize: CGFloat) -> UIImage? {
+            UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
+            defer { UIGraphicsEndImageContext() }
+            let rect = CGRect(origin: .zero, size: size)
+            let path = UIBezierPath(ovalIn: rect)
+            fill.setFill()
+            path.fill()
+            UIColor.white.setStroke()
+            path.lineWidth = 3
+            path.stroke()
+
+            let config = UIImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .semibold)
+            let iconImage = UIImage(systemName: systemName, withConfiguration: config)?
+                .withTintColor(.white, renderingMode: .alwaysOriginal)
+            if let iconImage {
+                let iconSize = min(symbolPointSize, min(size.width, size.height) - 8)
+                let symbolRect = CGRect(
+                    x: (size.width - iconSize) / 2,
+                    y: (size.height - iconSize) / 2,
+                    width: iconSize,
+                    height: iconSize
+                )
+                iconImage.draw(in: symbolRect)
             }
+            guard let rendered = UIGraphicsGetImageFromCurrentImageContext() else { return nil }
+            return normalizedMarkerSourceImage(from: rendered) ?? rendered
         }
 
         private func makeCircularSymbolImage(fill: UIColor, systemName: String, size: CGSize, symbolPointSize: CGFloat) -> UIImage? {
-            let renderer = UIGraphicsImageRenderer(size: size)
-            return renderer.image { context in
-                let rect = CGRect(origin: .zero, size: size)
-                context.cgContext.setFillColor(fill.cgColor)
-                context.cgContext.fillEllipse(in: rect)
-
-                if let symbol = UIImage(
-                    systemName: systemName,
-                    withConfiguration: UIImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .bold)
-                )?.withTintColor(.white, renderingMode: .alwaysOriginal) {
-                    let symbolRect = CGRect(
-                        x: (size.width - symbolPointSize) / 2,
-                        y: (size.height - symbolPointSize) / 2,
-                        width: symbolPointSize,
-                        height: symbolPointSize
-                    )
-                    symbol.draw(in: symbolRect)
-                }
+            UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
+            defer { UIGraphicsEndImageContext() }
+            let rect = CGRect(origin: .zero, size: size)
+            guard let context = UIGraphicsGetCurrentContext() else { return nil }
+            let path = UIBezierPath(ovalIn: rect)
+            path.addClip()
+            if let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: [
+                    UIColor(red: 0.22, green: 0.74, blue: 0.97, alpha: 1).cgColor,
+                    UIColor(red: 0.23, green: 0.51, blue: 0.96, alpha: 1).cgColor
+                ] as CFArray,
+                locations: [0, 1]
+            ) {
+                context.drawLinearGradient(
+                    gradient,
+                    start: CGPoint(x: rect.minX, y: rect.minY),
+                    end: CGPoint(x: rect.maxX, y: rect.maxY),
+                    options: []
+                )
+            } else {
+                fill.setFill()
+                path.fill()
             }
+
+            let iconImage: UIImage? = UIImage(named: "MapPinGlyph") ?? UIImage(systemName: systemName, withConfiguration: UIImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .bold))?.withTintColor(.white, renderingMode: .alwaysOriginal)
+            if let iconImage {
+                let iconWidth: CGFloat = 13.5
+                let iconHeight: CGFloat = 16.3
+                let symbolRect = CGRect(
+                    x: (size.width - iconWidth) / 2,
+                    y: (size.height - iconHeight) / 2,
+                    width: iconWidth,
+                    height: iconHeight
+                )
+                iconImage.draw(in: symbolRect)
+            }
+            guard let rendered = UIGraphicsGetImageFromCurrentImageContext() else { return nil }
+            return normalizedMarkerSourceImage(from: rendered) ?? rendered
+        }
+
+        private func normalizedMarkerSourceImage(from image: UIImage) -> UIImage? {
+            let format = UIGraphicsImageRendererFormat.default()
+            format.opaque = false
+            format.scale = max(image.scale, 1)
+            let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+            let rendered = renderer.image { _ in
+                image.draw(in: CGRect(origin: .zero, size: image.size))
+            }
+            guard let pngData = rendered.pngData(), let normalized = UIImage(data: pngData) else {
+                return rendered
+            }
+            return normalized
         }
     }
 }

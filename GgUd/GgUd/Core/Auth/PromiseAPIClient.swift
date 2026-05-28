@@ -464,8 +464,8 @@ final class PromiseAPIClient {
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let message = String(data: responseData, encoding: .utf8) ?? "알 수 없는 오류"
-                print("[Settlement] updateMyExpense failed status:", httpResponse.statusCode)
-                print("[Settlement] updateMyExpense failed body:", message)
+                print("[PlaceRecommendation] getPlaceRecommendations failed status:", httpResponse.statusCode)
+                print("[PlaceRecommendation] getPlaceRecommendations failed body:", message)
                 completion(.failure(AuthAPIError.server(statusCode: httpResponse.statusCode, message: message)))
                 return
             }

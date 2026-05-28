@@ -1,5 +1,8 @@
 import SwiftUI
-import MapKit
+import CoreLocation
+#if canImport(KakaoMapsSDK)
+import KakaoMapsSDK
+#endif
 
 struct MapView: View {
     @Environment(\.dismiss) private var dismiss
@@ -23,8 +26,8 @@ struct MapView: View {
     @State private var destinationAnnotation: DirectionsAnnotation?
     @State private var totalParticipantCount = 0
     @State private var mapCenter = CLLocationCoordinate2D(latitude: 37.4979, longitude: 127.0276)
-    @State private var regionSpan = MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
     @State private var isSheetExpanded = false
+    @State private var shouldDrawKakaoMap = false
     @State private var currentDestinationCoordinate: CLLocationCoordinate2D?
     @StateObject private var promiseRealtime = PromiseRealtimeManager()
     @StateObject private var liveLocationManager = MapLiveLocationManager()
@@ -94,6 +97,7 @@ struct MapView: View {
             }
         }
         .task(id: promiseId) {
+            shouldDrawKakaoMap = true
             await loadScreenData()
             connectRealtimeIfPossible()
             liveLocationManager.startTracking()
@@ -102,6 +106,7 @@ struct MapView: View {
             await loadScreenData()
         }
         .onDisappear {
+            shouldDrawKakaoMap = false
             promiseRealtime.disconnect()
             liveLocationManager.stopTracking()
         }
@@ -180,14 +185,20 @@ struct MapView: View {
     }
 
     private var mapSection: some View {
-        DirectionsMapRegionView(
-            center: mapCenter,
-            span: regionSpan,
-            participants: participantAnnotations,
-            destination: destinationAnnotation,
-            selectedRouteCoordinates: selectedRouteCoordinates,
-            isSheetExpanded: isSheetExpanded
-        )
+        Group {
+#if canImport(KakaoMapsSDK)
+            KakaoDirectionsMapView(
+                draw: $shouldDrawKakaoMap,
+                center: mapCenter,
+                participants: participantAnnotations,
+                destination: destinationAnnotation,
+                selectedRouteCoordinates: selectedRouteCoordinates
+            )
+#else
+            Rectangle()
+                .fill(Color(red: 0.94, green: 0.95, blue: 0.97))
+#endif
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay {
             if isLoading {
@@ -461,27 +472,35 @@ private extension MapView {
                 mergedParticipants.append(contentsOf: liveByKey.values)
             }
 
+            let remoteProfileImageDataByURL = await loadRemoteProfileImageDataMap(
+                urls: mergedParticipants.compactMap { participant in
+                    participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId)
+                }
+            )
+
             participantAnnotations = mergedParticipants.compactMap { participant in
                 guard let lat = participant.latitude, let lon = participant.longitude else { return nil }
+                let profileImageURL = participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId)
                 return DirectionsAnnotation(
                     title: participant.nickname ?? "참여자",
                     coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
                     tint: .systemBlue,
                     userId: participant.userId,
-                    profileImageURL: participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId),
-                    profileImageData: currentUserProfileImageData(for: participant.userId)
+                    profileImageURL: profileImageURL,
+                    profileImageData: currentUserProfileImageData(for: participant.userId) ?? remoteProfileImageDataByURL[profileImageURL ?? ""]
                 )
             }
             totalParticipantCount = max(mergedParticipants.count, departureParticipants.count, liveParticipants.count, participantAnnotations.count)
 
             participantsForDirections = mergedParticipants.compactMap { participant in
                 guard let lat = participant.latitude, let lon = participant.longitude else { return nil }
+                let profileImageURL = participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId)
                 return DirectionParticipant(
                     userId: participant.userId,
                     nickname: participant.nickname ?? "참여자",
                     coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
-                    profileImageURL: participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId),
-                    profileImageData: currentUserProfileImageData(for: participant.userId)
+                    profileImageURL: profileImageURL,
+                    profileImageData: currentUserProfileImageData(for: participant.userId) ?? remoteProfileImageDataByURL[profileImageURL ?? ""]
                 )
             }
 
@@ -490,7 +509,6 @@ private extension MapView {
             }
 
             if participantAnnotations.count > 1 || destinationAnnotation != nil {
-                regionSpan = MKCoordinateSpan(latitudeDelta: 0.015, longitudeDelta: 0.015)
             }
         case let .failure(error):
             loadError = error.localizedDescription
@@ -769,137 +787,387 @@ private extension MapView {
         guard let userId, userId == userSession.kakaoUserId else { return nil }
         return userSession.profileImageData
     }
+
+    func loadRemoteProfileImageDataMap(urls: [String]) async -> [String: Data] {
+        let uniqueURLs = Array(Set(urls.filter { !$0.isEmpty }))
+        guard !uniqueURLs.isEmpty else { return [:] }
+
+        return await withTaskGroup(of: (String, Data?).self) { group in
+            for urlString in uniqueURLs {
+                group.addTask {
+                    guard let url = URL(string: urlString) else { return (urlString, nil) }
+                    do {
+                        let (data, response) = try await URLSession.shared.data(from: url)
+                        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                        guard (200...299).contains(statusCode), !data.isEmpty else {
+                            return (urlString, nil)
+                        }
+                        return (urlString, data)
+                    } catch {
+                        return (urlString, nil)
+                    }
+                }
+            }
+
+            var resolved: [String: Data] = [:]
+            for await (urlString, data) in group {
+                if let data {
+                    resolved[urlString] = data
+                }
+            }
+            return resolved
+        }
+    }
 }
 
-private struct DirectionsMapRegionView: UIViewRepresentable {
+#if canImport(KakaoMapsSDK)
+private struct KakaoDirectionsMapView: UIViewRepresentable {
+    @Binding var draw: Bool
     let center: CLLocationCoordinate2D
-    let span: MKCoordinateSpan
     let participants: [DirectionsAnnotation]
     let destination: DirectionsAnnotation?
     let selectedRouteCoordinates: [CLLocationCoordinate2D]
-    let isSheetExpanded: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
 
-    func makeUIView(context: Context) -> MKMapView {
-        let mapView = MKMapView(frame: .zero)
-        mapView.delegate = context.coordinator
-        mapView.showsCompass = false
-        mapView.pointOfInterestFilter = .excludingAll
-        mapView.setRegion(MKCoordinateRegion(center: center, span: span), animated: false)
-        return mapView
+    func makeUIView(context: Context) -> KMViewContainer {
+        let view = KMViewContainer()
+        view.backgroundColor = .clear
+        view.clipsToBounds = true
+        context.coordinator.createController(view)
+        return view
     }
 
-    func updateUIView(_ mapView: MKMapView, context: Context) {
-        let defaultRegion = MKCoordinateRegion(center: center, span: span)
+    func updateUIView(_ uiView: KMViewContainer, context: Context) {
+        context.coordinator.latestCenter = center
+        context.coordinator.latestParticipants = participants
+        context.coordinator.latestDestination = destination
+        context.coordinator.latestRouteCoordinates = selectedRouteCoordinates
 
-        mapView.removeAnnotations(mapView.annotations)
-        mapView.removeOverlays(mapView.overlays)
-
-        let annotations = participants + (destination.map { [$0] } ?? [])
-        mapView.addAnnotations(annotations.map { annotation in
-            let point = MKPointAnnotation()
-            point.title = annotation.title
-            point.coordinate = annotation.coordinate
-            return AnnotatedPoint(base: annotation, point: point)
-        }.map(\.point))
-
-        context.coordinator.annotationMap = annotations.reduce(into: [:]) { partialResult, annotation in
-            partialResult[annotation.coordinate.key] = annotation
+        let size = uiView.bounds.size
+        if size.width > 10, size.height > 10 {
+            context.coordinator.updateContainerSizeIfNeeded(size)
+            context.coordinator.prepareIfNeeded()
         }
 
-        if selectedRouteCoordinates.count >= 2 {
-            let polyline = MKPolyline(coordinates: selectedRouteCoordinates, count: selectedRouteCoordinates.count)
-            mapView.addOverlay(polyline)
+        if draw {
+            context.coordinator.attachMapViewIfReady()
+            context.coordinator.requestMapActivation()
+            context.coordinator.syncIfPossible()
+        } else {
+            context.coordinator.controller?.pauseEngine()
+            context.coordinator.controller?.resetEngine()
+        }
+    }
 
-            var visibleRect = polyline.boundingMapRect
-            for annotation in annotations {
-                let pointRect = MKMapRect(origin: MKMapPoint(annotation.coordinate), size: MKMapSize(width: 0, height: 0))
-                visibleRect = visibleRect.union(pointRect)
+    static func dismantleUIView(_ uiView: KMViewContainer, coordinator: Coordinator) {
+        coordinator.controller?.pauseEngine()
+        coordinator.controller?.resetEngine()
+    }
+
+    final class Coordinator: NSObject, MapControllerDelegate {
+        var controller: KMController?
+        var latestCenter: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 37.4979, longitude: 127.0276)
+        var latestParticipants: [DirectionsAnnotation] = []
+        var latestDestination: DirectionsAnnotation?
+        var latestRouteCoordinates: [CLLocationCoordinate2D] = []
+        var containerSize: CGSize = .zero
+
+        private var hasPreparedEngine = false
+        private var hasAuthenticated = false
+        private var hasAddedMapView = false
+        private var isAddingMapView = false
+        private let participantLayerID = "directions_participants"
+        private let destinationLayerID = "directions_destination"
+        private let destinationStyleID = "directions_destination_style"
+        private var registeredStyleIDs: Set<String> = []
+
+        func createController(_ view: KMViewContainer) {
+            controller = KMController(viewContainer: view)
+            controller?.delegate = self
+        }
+
+        func updateContainerSizeIfNeeded(_ size: CGSize) {
+            guard size != containerSize else { return }
+            containerSize = size
+        }
+
+        func prepareIfNeeded() {
+            guard !hasPreparedEngine else { return }
+            guard let controller, containerSize.width > 10, containerSize.height > 10 else { return }
+            hasPreparedEngine = controller.prepareEngine()
+        }
+
+        func addViews() {
+            guard hasPreparedEngine, hasAuthenticated, !hasAddedMapView, !isAddingMapView else { return }
+            guard Thread.isMainThread else {
+                DispatchQueue.main.async { [weak self] in self?.addViews() }
+                return
             }
-
-            let widthPadding = max(visibleRect.size.width * 0.25, 1200)
-            let heightPadding = max(visibleRect.size.height * 0.35, 1200)
-            let paddedRect = visibleRect.insetBy(dx: -widthPadding, dy: -heightPadding)
-            let bottomPadding: CGFloat = isSheetExpanded ? 440 : 300
-            mapView.setVisibleMapRect(
-                paddedRect,
-                edgePadding: UIEdgeInsets(top: 120, left: 48, bottom: bottomPadding, right: 48),
-                animated: true
+            guard let controller else { return }
+            if controller.getView("directions_mapview") != nil {
+                hasAddedMapView = true
+                isAddingMapView = false
+                return
+            }
+            isAddingMapView = true
+            let mapviewInfo = MapviewInfo(
+                viewName: "directions_mapview",
+                viewInfoName: "map",
+                defaultPosition: MapPoint(longitude: latestCenter.longitude, latitude: latestCenter.latitude),
+                defaultLevel: 7
             )
-        } else if abs(mapView.region.center.latitude - defaultRegion.center.latitude) > 0.0001 ||
-                    abs(mapView.region.center.longitude - defaultRegion.center.longitude) > 0.0001 {
-            mapView.setRegion(defaultRegion, animated: true)
-        }
-    }
-
-    final class Coordinator: NSObject, MKMapViewDelegate {
-        var annotationMap: [String: DirectionsAnnotation] = [:]
-
-        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            guard let point = annotation as? MKPointAnnotation else { return nil }
-            let identifier = "DirectionsAnnotationView"
-            let view = (mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? AvatarAnnotationView) ?? AvatarAnnotationView(annotation: point, reuseIdentifier: identifier)
-            view.annotation = point
-            view.canShowCallout = false
-
-            if let base = annotationMap[point.coordinate.key] {
-                if base.tint == .systemGreen {
-                    let size: CGFloat = 44
-                    let symbolSize: CGFloat = 18
-                    view.image = annotationImage(tint: base.tint, symbolName: "mappin.circle.fill", size: size, symbolSize: symbolSize)
-                    view.avatarImageView.isHidden = true
-                    view.centerOffset = CGPoint(x: 0, y: -size * 0.1)
-                } else {
-                    view.image = nil
-                    view.avatarImageView.isHidden = false
-                    view.configure(
-                        profileImageURL: base.profileImageURL,
-                        profileImageData: base.profileImageData,
-                        tint: base.tint
-                    )
-                    view.centerOffset = CGPoint(x: 0, y: -4)
-                }
-            }
-
-            return view
-        }
-
-        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-            if let polyline = overlay as? MKPolyline {
-                let renderer = MKPolylineRenderer(polyline: polyline)
-                renderer.strokeColor = UIColor.systemBlue
-                renderer.lineWidth = 6
-                renderer.lineCap = .round
-                renderer.lineJoin = .round
-                renderer.alpha = 0.9
-                return renderer
-            }
-            return MKOverlayRenderer(overlay: overlay)
-        }
-
-        private func annotationImage(tint: UIColor, symbolName: String, size: CGFloat, symbolSize: CGFloat) -> UIImage? {
-            let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-            return renderer.image { context in
-                let rect = CGRect(origin: .zero, size: CGSize(width: size, height: size))
-                tint.setFill()
-                UIBezierPath(ovalIn: rect).fill()
-
-                let symbolConfig = UIImage.SymbolConfiguration(pointSize: symbolSize, weight: .bold)
-                let symbol = UIImage(systemName: symbolName, withConfiguration: symbolConfig)?.withTintColor(.white, renderingMode: .alwaysOriginal)
-                let symbolRect = CGRect(x: (size - symbolSize) / 2, y: (size - symbolSize) / 2, width: symbolSize, height: symbolSize)
-                symbol?.draw(in: symbolRect)
+            let size = containerSize == .zero ? CGSize(width: 393, height: 852) : containerSize
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let controller = self.controller else { return }
+                controller.addView(mapviewInfo, viewSize: size)
             }
         }
-    }
 
-    private struct AnnotatedPoint {
-        let base: DirectionsAnnotation
-        let point: MKPointAnnotation
+        func addViewSucceeded(_ viewName: String, viewInfoName: String) {
+            isAddingMapView = false
+            hasAddedMapView = true
+            guard let mapView = controller?.getView("directions_mapview") as? KakaoMap else { return }
+            if containerSize != .zero {
+                mapView.viewRect = CGRect(origin: .zero, size: containerSize)
+            }
+            requestMapActivation()
+            syncIfPossible()
+        }
+
+        func addViewFailed(_ viewName: String, viewInfoName: String) {
+            isAddingMapView = false
+            hasAddedMapView = false
+        }
+
+        func authenticationSucceeded() {
+            hasAuthenticated = true
+            DispatchQueue.main.async { [weak self] in
+                self?.attachMapViewIfReady()
+            }
+        }
+
+        func authenticationFailed(_ errorCode: Int, desc: String) {
+            print("[KakaoMap] authenticationFailed: \(errorCode) - \(desc)")
+        }
+
+        func containerDidResized(_ size: CGSize) {
+            containerSize = size
+            attachMapViewIfReady()
+            guard let mapView = controller?.getView("directions_mapview") as? KakaoMap else { return }
+            mapView.viewRect = CGRect(origin: .zero, size: size)
+            requestMapActivation()
+            syncIfPossible()
+        }
+
+        func attachMapViewIfReady() {
+            guard hasPreparedEngine, hasAuthenticated, containerSize.width > 10, containerSize.height > 10 else { return }
+            addViews()
+        }
+
+        func requestMapActivation() {
+            guard let controller, hasPreparedEngine, hasAddedMapView else { return }
+            controller.activateEngine()
+        }
+
+        func syncIfPossible() {
+            guard let mapView = controller?.getView("directions_mapview") as? KakaoMap else { return }
+            moveCameraIfPossible(mapView)
+
+            let labelManager = mapView.getLabelManager()
+            guard let participantLayer = ensureLabelLayer(labelManager, layerID: participantLayerID, zOrder: 10),
+                  let destinationLayer = ensureLabelLayer(labelManager, layerID: destinationLayerID, zOrder: 20) else { return }
+
+            participantLayer.visible = true
+            destinationLayer.visible = true
+            participantLayer.setClickable(false)
+            destinationLayer.setClickable(false)
+            participantLayer.clearAllItems()
+            destinationLayer.clearAllItems()
+
+            registerDestinationStyleIfNeeded(labelManager)
+
+            for item in latestParticipants {
+                let styleID = participantStyleID(for: item)
+                registerParticipantStyleIfNeeded(labelManager, item: item, styleID: styleID)
+                let options = PoiOptions(styleID: styleID, poiID: item.id.uuidString)
+                options.rank = 1
+                options.clickable = false
+                options.addText(PoiText(text: item.title, styleIndex: 0))
+                let poi = participantLayer.addPoi(option: options, at: MapPoint(longitude: item.coordinate.longitude, latitude: item.coordinate.latitude))
+                poi?.show()
+            }
+
+            if let destination = latestDestination {
+                let options = PoiOptions(styleID: destinationStyleID, poiID: destination.id.uuidString)
+                options.rank = 0
+                options.clickable = false
+                let poi = destinationLayer.addPoi(option: options, at: MapPoint(longitude: destination.coordinate.longitude, latitude: destination.coordinate.latitude))
+                poi?.show()
+            }
+
+            participantLayer.showAllPois()
+            destinationLayer.showAllPois()
+            mapView.refresh()
+        }
+
+        private func moveCameraIfPossible(_ mapView: KakaoMap) {
+            let allCoordinates = latestParticipants.map(\.coordinate) + (latestDestination.map { [$0.coordinate] } ?? []) + latestRouteCoordinates
+            let targetCenter: CLLocationCoordinate2D
+            if allCoordinates.isEmpty {
+                targetCenter = latestCenter
+            } else {
+                let lat = allCoordinates.map(\.latitude).reduce(0, +) / Double(allCoordinates.count)
+                let lon = allCoordinates.map(\.longitude).reduce(0, +) / Double(allCoordinates.count)
+                targetCenter = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            }
+            let cameraUpdate = CameraUpdate.make(target: MapPoint(longitude: targetCenter.longitude, latitude: targetCenter.latitude), zoomLevel: 9, mapView: mapView)
+            mapView.moveCamera(cameraUpdate)
+        }
+
+        private func ensureLabelLayer(_ labelManager: LabelManager, layerID: String, zOrder: Int) -> LabelLayer? {
+            if let layer = labelManager.getLabelLayer(layerID: layerID) { return layer }
+            let options = LabelLayerOptions(layerID: layerID, competitionType: .none, competitionUnit: .symbolFirst, orderType: .rank, zOrder: zOrder)
+            return labelManager.addLabelLayer(option: options)
+        }
+
+        private func participantStyleID(for item: DirectionsAnnotation) -> String {
+            let identity = item.userId.map { "id_\($0)" } ?? item.title.replacingOccurrences(of: " ", with: "_")
+            let hasProfile = item.profileImageData != nil || item.profileImageURL != nil
+            return "directions_participant_\(identity)_\(hasProfile ? "profile" : "placeholder")"
+        }
+
+        private func registerParticipantStyleIfNeeded(_ labelManager: LabelManager, item: DirectionsAnnotation, styleID: String) {
+            guard !registeredStyleIDs.contains(styleID) else { return }
+            let iconStyle = PoiIconStyle(symbol: makeParticipantMarkerImage(item: item), anchorPoint: CGPoint(x: 0.5, y: 1.0))
+            let textStyle = TextStyle(fontSize: 22, fontColor: UIColor(red: 0.07, green: 0.09, blue: 0.16, alpha: 1), strokeThickness: 4, strokeColor: .white)
+            let lineStyle = PoiTextLineStyle(textStyle: textStyle)
+            let poiTextStyle = PoiTextStyle(textLineStyles: [lineStyle])
+            let perLevelStyle = PerLevelPoiStyle(iconStyle: iconStyle, textStyle: poiTextStyle, padding: 8, level: 0)
+            labelManager.addPoiStyle(PoiStyle(styleID: styleID, styles: [perLevelStyle]))
+            registeredStyleIDs.insert(styleID)
+        }
+
+        private func registerDestinationStyleIfNeeded(_ labelManager: LabelManager) {
+            guard !registeredStyleIDs.contains(destinationStyleID) else { return }
+            let iconStyle = PoiIconStyle(symbol: makeCircularSymbolImage(fill: .systemGreen, systemName: "mappin.circle.fill", size: CGSize(width: 48, height: 48), symbolPointSize: 14), anchorPoint: CGPoint(x: 0.5, y: 1.0))
+            let perLevelStyle = PerLevelPoiStyle(iconStyle: iconStyle, padding: 0, level: 0)
+            labelManager.addPoiStyle(PoiStyle(styleID: destinationStyleID, styles: [perLevelStyle]))
+            registeredStyleIDs.insert(destinationStyleID)
+        }
+
+        private func makeParticipantMarkerImage(item: DirectionsAnnotation) -> UIImage? {
+            if let data = item.profileImageData,
+               let image = UIImage(data: data),
+               let normalizedImage = normalizedMarkerSourceImage(from: image) {
+                return circularAvatarImage(from: normalizedImage, tint: item.tint)
+            }
+            return makeAvatarPlaceholderImage(fill: item.tint, systemName: "person.fill", size: CGSize(width: 48, height: 48), symbolPointSize: 16)
+        }
+
+        private func circularAvatarImage(from image: UIImage, tint: UIColor) -> UIImage? {
+            let size = CGSize(width: 48, height: 48)
+            UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
+            defer { UIGraphicsEndImageContext() }
+            let rect = CGRect(origin: .zero, size: size)
+            UIBezierPath(ovalIn: rect).addClip()
+            image.draw(in: rect)
+            let path = UIBezierPath(ovalIn: rect)
+            UIColor.white.setStroke()
+            path.lineWidth = 3
+            path.stroke()
+            guard let rendered = UIGraphicsGetImageFromCurrentImageContext() else { return nil }
+            return normalizedMarkerSourceImage(from: rendered) ?? rendered
+        }
+
+        private func makeAvatarPlaceholderImage(fill: UIColor, systemName: String, size: CGSize, symbolPointSize: CGFloat) -> UIImage? {
+            UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
+            defer { UIGraphicsEndImageContext() }
+            let rect = CGRect(origin: .zero, size: size)
+            let path = UIBezierPath(ovalIn: rect)
+            fill.setFill()
+            path.fill()
+            UIColor.white.setStroke()
+            path.lineWidth = 3
+            path.stroke()
+
+            let config = UIImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .semibold)
+            let iconImage = UIImage(systemName: systemName, withConfiguration: config)?
+                .withTintColor(.white, renderingMode: .alwaysOriginal)
+            if let iconImage {
+                let iconSize = min(symbolPointSize, min(size.width, size.height) - 8)
+                let symbolRect = CGRect(
+                    x: (size.width - iconSize) / 2,
+                    y: (size.height - iconSize) / 2,
+                    width: iconSize,
+                    height: iconSize
+                )
+                iconImage.draw(in: symbolRect)
+            }
+            guard let rendered = UIGraphicsGetImageFromCurrentImageContext() else { return nil }
+            return normalizedMarkerSourceImage(from: rendered) ?? rendered
+        }
+
+        private func makeCircularSymbolImage(fill: UIColor, systemName: String, size: CGSize, symbolPointSize: CGFloat) -> UIImage? {
+            UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
+            defer { UIGraphicsEndImageContext() }
+            let rect = CGRect(origin: .zero, size: size)
+            guard let context = UIGraphicsGetCurrentContext() else { return nil }
+            let path = UIBezierPath(ovalIn: rect)
+            path.addClip()
+            if let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: [
+                    UIColor(red: 0.22, green: 0.74, blue: 0.97, alpha: 1).cgColor,
+                    UIColor(red: 0.23, green: 0.51, blue: 0.96, alpha: 1).cgColor
+                ] as CFArray,
+                locations: [0, 1]
+            ) {
+                context.drawLinearGradient(
+                    gradient,
+                    start: CGPoint(x: rect.minX, y: rect.minY),
+                    end: CGPoint(x: rect.maxX, y: rect.maxY),
+                    options: []
+                )
+            } else {
+                fill.setFill()
+                path.fill()
+            }
+
+            let iconImage: UIImage? = UIImage(named: "MapPinGlyph") ?? UIImage(systemName: systemName, withConfiguration: UIImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .bold))?.withTintColor(.white, renderingMode: .alwaysOriginal)
+            if let iconImage {
+                let iconWidth: CGFloat = 13.5
+                let iconHeight: CGFloat = 16.3
+                let symbolRect = CGRect(
+                    x: (size.width - iconWidth) / 2,
+                    y: (size.height - iconHeight) / 2,
+                    width: iconWidth,
+                    height: iconHeight
+                )
+                iconImage.draw(in: symbolRect)
+            }
+            guard let rendered = UIGraphicsGetImageFromCurrentImageContext() else { return nil }
+            return normalizedMarkerSourceImage(from: rendered) ?? rendered
+        }
+
+        private func normalizedMarkerSourceImage(from image: UIImage) -> UIImage? {
+            let format = UIGraphicsImageRendererFormat.default()
+            format.opaque = false
+            format.scale = max(image.scale, 1)
+            let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+            let rendered = renderer.image { _ in
+                image.draw(in: CGRect(origin: .zero, size: image.size))
+            }
+            guard let pngData = rendered.pngData(), let normalized = UIImage(data: pngData) else {
+                return rendered
+            }
+            return normalized
+        }
     }
 }
+#endif
 
 private struct DirectionsAnnotation: Identifiable {
     let id = UUID()
@@ -1046,86 +1314,6 @@ private struct ParticipantAvatarView: View {
             )
     }
 }
-
-private final class AvatarAnnotationView: MKAnnotationView {
-    let avatarImageView = UIImageView()
-    private var imageTask: URLSessionDataTask?
-
-    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
-        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
-        setup()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setup()
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        imageTask?.cancel()
-        avatarImageView.image = nil
-        avatarImageView.backgroundColor = .systemBlue
-    }
-
-    func configure(profileImageURL: String?, profileImageData: Data?, tint: UIColor) {
-        imageTask?.cancel()
-        avatarImageView.backgroundColor = tint
-
-        if let profileImageData, let image = UIImage(data: profileImageData) {
-            avatarImageView.image = image
-            return
-        }
-
-        guard let profileImageURL, let url = URL(string: profileImageURL) else {
-            avatarImageView.image = Self.placeholderImage()
-            return
-        }
-
-        avatarImageView.image = Self.placeholderImage()
-        imageTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let self, let data, let image = UIImage(data: data) else { return }
-            DispatchQueue.main.async {
-                self.avatarImageView.image = image
-            }
-        }
-        imageTask?.resume()
-    }
-
-    private func setup() {
-        frame = CGRect(x: 0, y: 0, width: 50, height: 50)
-        centerOffset = CGPoint(x: 0, y: -4)
-
-        avatarImageView.frame = bounds
-        avatarImageView.contentMode = .scaleAspectFill
-        avatarImageView.clipsToBounds = true
-        avatarImageView.layer.cornerRadius = bounds.width / 2
-        avatarImageView.layer.borderWidth = 3
-        avatarImageView.layer.borderColor = UIColor.white.cgColor
-        avatarImageView.layer.shadowColor = UIColor.black.withAlphaComponent(0.16).cgColor
-        avatarImageView.layer.shadowOpacity = 1
-        avatarImageView.layer.shadowRadius = 8
-        avatarImageView.layer.shadowOffset = CGSize(width: 0, height: 4)
-        avatarImageView.backgroundColor = .systemBlue
-        avatarImageView.image = Self.placeholderImage()
-        addSubview(avatarImageView)
-    }
-
-    private static func placeholderImage() -> UIImage? {
-        let size = CGSize(width: 50, height: 50)
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in
-            UIColor.systemBlue.setFill()
-            UIBezierPath(ovalIn: CGRect(origin: .zero, size: size)).fill()
-
-            let symbolConfig = UIImage.SymbolConfiguration(pointSize: 18, weight: .bold)
-            let symbol = UIImage(systemName: "person.fill", withConfiguration: symbolConfig)?
-                .withTintColor(.white, renderingMode: .alwaysOriginal)
-            symbol?.draw(in: CGRect(x: 16, y: 14, width: 18, height: 18))
-        }
-    }
-}
-
 
 private final class MapLiveLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var coordinate: CLLocationCoordinate2D?
