@@ -220,12 +220,26 @@ struct SettlementView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(settlement.settlementCompleted == true || isCompletingSettlement)
-            } else {
-                Text("호스트가 정산을 완료할 수 있어요.")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(AppColors.subText)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 4)
+            } else if settlement.settlementCompleted == true {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16, weight: .bold))
+                    Text("정산 완료됨")
+                        .font(.system(size: 16, weight: .bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(
+                    LinearGradient(
+                        colors: [Color(hex: "#9CA3AF"), Color(hex: "#6B7280")],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: Color.black.opacity(0.10), radius: 15, x: 0, y: 10)
+                .shadow(color: Color.black.opacity(0.10), radius: 6, x: 0, y: 4)
             }
         }
     }

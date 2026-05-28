@@ -22,6 +22,7 @@ struct MapView: View {
     @State private var selectedRouteID: UUID?
     @State private var selectedRouteTitle: String?
     @State private var selectedRouteCoordinates: [CLLocationCoordinate2D] = []
+    @State private var destinationTitleText: String = "약속 장소"
     @State private var participantAnnotations: [DirectionsAnnotation] = []
     @State private var destinationAnnotation: DirectionsAnnotation?
     @State private var totalParticipantCount = 0
@@ -29,6 +30,7 @@ struct MapView: View {
     @State private var isSheetExpanded = false
     @State private var shouldDrawKakaoMap = false
     @State private var currentDestinationCoordinate: CLLocationCoordinate2D?
+    @State private var currentUserProfileImageCache: Data?
     @StateObject private var promiseRealtime = PromiseRealtimeManager()
     @StateObject private var liveLocationManager = MapLiveLocationManager()
     @State private var navigateToSettlement = false
@@ -105,10 +107,18 @@ struct MapView: View {
         .refreshable {
             await loadScreenData()
         }
+        .onAppear {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Notification.Name("hideCustomTabBar"), object: nil)
+            }
+        }
         .onDisappear {
             shouldDrawKakaoMap = false
             promiseRealtime.disconnect()
             liveLocationManager.stopTracking()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Notification.Name("showCustomTabBar"), object: nil)
+            }
         }
         .onReceive(promiseRealtime.$latestLocationEvent.compactMap { $0 }) { event in
             Task {
@@ -220,9 +230,15 @@ struct MapView: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 24) {
-                    Text("길찾기")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(AppColors.text)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("길찾기")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(AppColors.text)
+
+                        Text("도착지: \(destinationTitleText)")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(AppColors.text)
+                    }
 
                     if let loadError {
                         Text(loadError)
@@ -253,61 +269,32 @@ struct MapView: View {
     }
 
     private func directionsCard(for card: ParticipantDirectionsCard) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 14) {
-                ParticipantAvatarView(
-                    profileImageURL: card.profileImageURL,
-                    profileImageData: card.profileImageData,
-                    size: 46
-                )
-
-                Text(card.nickname)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(AppColors.text)
-            }
-
-            VStack(alignment: .leading, spacing: 12) {
-                Label {
-                    Text("경로 정보")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(AppColors.text)
-                } icon: {
-                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(AppColors.primary)
-                }
-
-                if card.routeOptions.isEmpty {
-                    Text("경로 정보를 불러오지 못했어요.")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(AppColors.subText)
-                } else {
-                    VStack(spacing: 12) {
-                        ForEach(card.routeOptions) { option in
-                            routeOptionCard(option, isSelected: selectedRouteID == option.id)
-                                .onTapGesture {
-                                    selectRoute(option)
-                                }
-                        }
+        Group {
+            if card.routeOptions.isEmpty {
+                Text("경로 정보를 불러오지 못했어요.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AppColors.subText)
+                    .frame(maxWidth: .infinity, minHeight: 180)
+                    .background(Color(hex: "#F3F4F6"))
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(card.routeOptions) { option in
+                        routeOptionCard(option, isSelected: selectedRouteID == option.id)
+                            .onTapGesture {
+                                selectRoute(option)
+                            }
                     }
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(hex: "#F9FAFB"))
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#F3F4F6"))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private func routeOptionCard(_ option: DirectionRouteOptionDisplay, isSelected: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Text(option.title)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(AppColors.text)
 
                 Spacer(minLength: 0)
@@ -325,21 +312,37 @@ struct MapView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(option.steps) { step in
-                    Text(step.displayText)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(AppColors.subText)
-                        .multilineTextAlignment(.leading)
+            VStack(alignment: .leading, spacing: 12) {
+                Label {
+                    Text("경로 정보")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(AppColors.text)
+                } icon: {
+                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppColors.primary)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(option.steps) { step in
+                        Text(step.displayText)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(AppColors.subText)
+                            .multilineTextAlignment(.leading)
+                    }
                 }
             }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
-        .padding(16)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isSelected ? Color(hex: "#EFF6FF") : Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(isSelected ? Color(hex: "#EFF6FF") : Color(hex: "#F3F4F6"))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(isSelected ? AppColors.primary : Color(hex: "#E5E7EB"), lineWidth: isSelected ? 1.5 : 1)
         )
     }
@@ -430,8 +433,10 @@ private extension MapView {
                 let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
                 destinationCoordinate = coordinate
                 currentDestinationCoordinate = coordinate
+                let resolvedDestinationTitle = destination.name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? (destination.name ?? "약속 장소") : "약속 장소"
+                destinationTitleText = resolvedDestinationTitle
                 destinationAnnotation = DirectionsAnnotation(
-                    title: destination.name ?? "약속 장소",
+                    title: resolvedDestinationTitle,
                     coordinate: coordinate,
                     tint: .systemGreen,
                     userId: nil,
@@ -442,6 +447,7 @@ private extension MapView {
             } else {
                 currentDestinationCoordinate = nil
                 destinationAnnotation = nil
+                destinationTitleText = "약속 장소"
             }
 
             let departureParticipants = mapData.participantDepartures ?? []
@@ -462,7 +468,15 @@ private extension MapView {
             for participant in departureParticipants {
                 let key = participantKey(userId: participant.userId, nickname: participant.nickname)
                 if let live = liveByKey.removeValue(forKey: key) {
-                    mergedParticipants.append(live)
+                    let merged = ParticipantMarkerResponse(
+                        userId: live.userId ?? participant.userId,
+                        nickname: (live.nickname?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? live.nickname : participant.nickname),
+                        profileImageUrl: live.profileImageUrl ?? participant.profileImageUrl,
+                        latitude: live.latitude ?? participant.latitude,
+                        longitude: live.longitude ?? participant.longitude,
+                        host: live.host ?? participant.host
+                    )
+                    mergedParticipants.append(merged)
                 } else {
                     mergedParticipants.append(participant)
                 }
@@ -472,35 +486,53 @@ private extension MapView {
                 mergedParticipants.append(contentsOf: liveByKey.values)
             }
 
-            let remoteProfileImageDataByURL = await loadRemoteProfileImageDataMap(
-                urls: mergedParticipants.compactMap { participant in
-                    participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId)
+            let profileImageURLs = mergedParticipants.compactMap { participant in
+                participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId, nickname: participant.nickname)
+            }
+            let remoteProfileImageDataByURL = await loadRemoteProfileImageDataMap(urls: profileImageURLs)
+            let currentUserRemoteProfileData: Data? = {
+                if let cached = userSession.profileImageData ?? currentUserProfileImageCache {
+                    return cached
                 }
-            )
+                guard let currentURL = userSession.profileImageURL, !currentURL.isEmpty else { return nil }
+                return remoteProfileImageDataByURL[currentURL]
+            }()
+            if let currentUserRemoteProfileData, currentUserProfileImageCache == nil || userSession.profileImageData == nil {
+                currentUserProfileImageCache = currentUserRemoteProfileData
+                if userSession.profileImageData == nil {
+                    userSession.setProfilePreviewImageData(currentUserRemoteProfileData)
+                }
+            }
 
             participantAnnotations = mergedParticipants.compactMap { participant in
                 guard let lat = participant.latitude, let lon = participant.longitude else { return nil }
-                let profileImageURL = participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId)
+                let resolvedNickname = participant.nickname ?? "참여자"
+                let isCurrentUser = participant.userId == userSession.kakaoUserId || normalizedParticipantName(resolvedNickname) == normalizedParticipantName(userSession.nickname)
+                let profileImageURL = participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId, nickname: participant.nickname)
+                let fallbackProfileData = currentUserProfileImageData(for: participant.userId, nickname: participant.nickname) ?? remoteProfileImageDataByURL[profileImageURL ?? ""] ?? currentUserRemoteProfileData
                 return DirectionsAnnotation(
-                    title: participant.nickname ?? "참여자",
+                    title: resolvedNickname,
                     coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
                     tint: .systemBlue,
                     userId: participant.userId,
-                    profileImageURL: profileImageURL,
-                    profileImageData: currentUserProfileImageData(for: participant.userId) ?? remoteProfileImageDataByURL[profileImageURL ?? ""]
+                    profileImageURL: isCurrentUser ? (userSession.profileImageURL ?? profileImageURL) : profileImageURL,
+                    profileImageData: isCurrentUser ? (userSession.profileImageData ?? fallbackProfileData) : fallbackProfileData
                 )
             }
             totalParticipantCount = max(mergedParticipants.count, departureParticipants.count, liveParticipants.count, participantAnnotations.count)
 
             participantsForDirections = mergedParticipants.compactMap { participant in
                 guard let lat = participant.latitude, let lon = participant.longitude else { return nil }
-                let profileImageURL = participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId)
+                let resolvedNickname = participant.nickname ?? "참여자"
+                let isCurrentUser = participant.userId == userSession.kakaoUserId || normalizedParticipantName(resolvedNickname) == normalizedParticipantName(userSession.nickname)
+                let profileImageURL = participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId, nickname: participant.nickname)
+                let fallbackProfileData = currentUserProfileImageData(for: participant.userId, nickname: participant.nickname) ?? remoteProfileImageDataByURL[profileImageURL ?? ""] ?? currentUserRemoteProfileData
                 return DirectionParticipant(
                     userId: participant.userId,
-                    nickname: participant.nickname ?? "참여자",
+                    nickname: resolvedNickname,
                     coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
-                    profileImageURL: profileImageURL,
-                    profileImageData: currentUserProfileImageData(for: participant.userId) ?? remoteProfileImageDataByURL[profileImageURL ?? ""]
+                    profileImageURL: isCurrentUser ? (userSession.profileImageURL ?? profileImageURL) : profileImageURL,
+                    profileImageData: isCurrentUser ? (userSession.profileImageData ?? fallbackProfileData) : fallbackProfileData
                 )
             }
 
@@ -590,7 +622,12 @@ private extension MapView {
         switch result {
         case let .success(response):
             return (response.routeOptions ?? []).enumerated().map { index, option in
-                DirectionRouteOptionDisplay(option: option, index: index)
+                DirectionRouteOptionDisplay(
+                    option: option,
+                    index: index,
+                    fallbackOrigin: participant.coordinate,
+                    fallbackDestination: destination
+                )
             }
         case let .failure(error):
             print("[Directions] error for \(participant.nickname):", error.localizedDescription)
@@ -665,11 +702,13 @@ private extension MapView {
     func applyParticipantLocation(userId: Int64?, nickname: String?, coordinate: CLLocationCoordinate2D) {
         let resolvedNickname = (nickname?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? nickname! : "참여자")
 
+        let isCurrentUser = userId == userSession.kakaoUserId || normalizedParticipantName(resolvedNickname) == normalizedParticipantName(userSession.nickname)
+
         if let index = participantAnnotations.firstIndex(where: {
             if let existingUserId = $0.userId, let userId {
                 return existingUserId == userId
             }
-            return $0.title == resolvedNickname
+            return normalizedParticipantName($0.title) == normalizedParticipantName(resolvedNickname)
         }) {
             let existing = participantAnnotations[index]
             participantAnnotations[index] = DirectionsAnnotation(
@@ -677,8 +716,8 @@ private extension MapView {
                 coordinate: coordinate,
                 tint: existing.tint,
                 userId: existing.userId ?? userId,
-                profileImageURL: existing.profileImageURL,
-                profileImageData: existing.profileImageData
+                profileImageURL: isCurrentUser ? (userSession.profileImageURL ?? existing.profileImageURL) : existing.profileImageURL,
+                profileImageData: isCurrentUser ? (userSession.profileImageData ?? existing.profileImageData) : existing.profileImageData
             )
         } else {
             participantAnnotations.append(
@@ -687,15 +726,15 @@ private extension MapView {
                     coordinate: coordinate,
                     tint: .systemBlue,
                     userId: userId,
-                    profileImageURL: currentUserProfileImageURL(for: userId),
-                    profileImageData: currentUserProfileImageData(for: userId)
+                    profileImageURL: currentUserProfileImageURL(for: userId, nickname: resolvedNickname),
+                    profileImageData: currentUserProfileImageData(for: userId, nickname: resolvedNickname)
                 )
             )
         }
 
         totalParticipantCount = max(totalParticipantCount, participantAnnotations.count)
 
-        if userId == userSession.kakaoUserId || (!userSession.nickname.isEmpty && resolvedNickname == userSession.nickname) {
+        if isCurrentUser {
             mapCenter = coordinate
         }
     }
@@ -778,14 +817,36 @@ private extension MapView {
         }
     }
 
-    func currentUserProfileImageURL(for userId: Int64?) -> String? {
-        guard let userId, userId == userSession.kakaoUserId else { return nil }
-        return userSession.profileImageURL
+    func currentUserProfileImageURL(for userId: Int64?, nickname: String? = nil) -> String? {
+        if let userId, userId == userSession.kakaoUserId {
+            return userSession.profileImageURL
+        }
+        if let nickname,
+           normalizedParticipantName(nickname) == normalizedParticipantName(userSession.nickname) {
+            return userSession.profileImageURL
+        }
+        return nil
     }
 
-    func currentUserProfileImageData(for userId: Int64?) -> Data? {
-        guard let userId, userId == userSession.kakaoUserId else { return nil }
-        return userSession.profileImageData
+    func currentUserProfileImageData(for userId: Int64?, nickname: String? = nil) -> Data? {
+        if let userId, userId == userSession.kakaoUserId {
+            return userSession.profileImageData ?? currentUserProfileImageCache
+        }
+        if let nickname,
+           normalizedParticipantName(nickname) == normalizedParticipantName(userSession.nickname) {
+            return userSession.profileImageData ?? currentUserProfileImageCache
+        }
+        return nil
+    }
+
+    func normalizedParticipantName(_ raw: String?) -> String {
+        guard let raw else { return "" }
+        return raw
+            .replacingOccurrences(of: "(나)", with: "")
+            .replacingOccurrences(of: "(호스트)", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
     }
 
     func loadRemoteProfileImageDataMap(urls: [String]) async -> [String: Data] {
@@ -853,12 +914,11 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
         }
 
         if draw {
-            context.coordinator.attachMapViewIfReady()
             context.coordinator.requestMapActivation()
+            context.coordinator.attachMapViewIfReady()
             context.coordinator.syncIfPossible()
         } else {
             context.coordinator.controller?.pauseEngine()
-            context.coordinator.controller?.resetEngine()
         }
     }
 
@@ -882,6 +942,9 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
         private let participantLayerID = "directions_participants"
         private let destinationLayerID = "directions_destination"
         private let destinationStyleID = "directions_destination_style"
+        private let routeLayerID = "directions_route_layer_overlay"
+        private let routeStyleID = "directions_route_style"
+        private let routeShapeID = "directions_route_shape"
         private var registeredStyleIDs: Set<String> = []
 
         func createController(_ view: KMViewContainer) {
@@ -968,17 +1031,18 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
         }
 
         func requestMapActivation() {
-            guard let controller, hasPreparedEngine, hasAddedMapView else { return }
+            guard let controller, hasPreparedEngine else { return }
             controller.activateEngine()
         }
 
         func syncIfPossible() {
             guard let mapView = controller?.getView("directions_mapview") as? KakaoMap else { return }
             moveCameraIfPossible(mapView)
+            syncRouteIfPossible(mapView)
 
             let labelManager = mapView.getLabelManager()
-            guard let participantLayer = ensureLabelLayer(labelManager, layerID: participantLayerID, zOrder: 10),
-                  let destinationLayer = ensureLabelLayer(labelManager, layerID: destinationLayerID, zOrder: 20) else { return }
+            guard let participantLayer = ensureLabelLayer(labelManager, layerID: participantLayerID, zOrder: 30),
+                  let destinationLayer = ensureLabelLayer(labelManager, layerID: destinationLayerID, zOrder: 10) else { return }
 
             participantLayer.visible = true
             destinationLayer.visible = true
@@ -1014,7 +1078,42 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
         }
 
         private func moveCameraIfPossible(_ mapView: KakaoMap) {
-            let allCoordinates = latestParticipants.map(\.coordinate) + (latestDestination.map { [$0.coordinate] } ?? []) + latestRouteCoordinates
+            if latestRouteCoordinates.count >= 2 {
+                let latitudes = latestRouteCoordinates.map(\.latitude)
+                let longitudes = latestRouteCoordinates.map(\.longitude)
+                let minLat = latitudes.min() ?? latestCenter.latitude
+                let maxLat = latitudes.max() ?? latestCenter.latitude
+                let minLon = longitudes.min() ?? latestCenter.longitude
+                let maxLon = longitudes.max() ?? latestCenter.longitude
+                let center = CLLocationCoordinate2D(
+                    latitude: (minLat + maxLat) / 2.0,
+                    longitude: (minLon + maxLon) / 2.0
+                )
+                let latSpan = max(maxLat - minLat, 0.002)
+                let lonSpan = max(maxLon - minLon, 0.002)
+                let span = max(latSpan, lonSpan)
+                let zoomLevel: Int
+                switch span {
+                case ..<0.003:
+                    zoomLevel = 14
+                case ..<0.008:
+                    zoomLevel = 13
+                case ..<0.02:
+                    zoomLevel = 12
+                default:
+                    zoomLevel = 11
+                }
+                let upwardScreenOffset = max(latSpan * 0.58, 0.0045)
+                let shiftedCenter = CLLocationCoordinate2D(
+                    latitude: center.latitude - upwardScreenOffset,
+                    longitude: center.longitude
+                )
+                let cameraUpdate = CameraUpdate.make(target: MapPoint(longitude: shiftedCenter.longitude, latitude: shiftedCenter.latitude), zoomLevel: zoomLevel, mapView: mapView)
+                mapView.moveCamera(cameraUpdate)
+                return
+            }
+
+            let allCoordinates = latestParticipants.map(\.coordinate) + (latestDestination.map { [$0.coordinate] } ?? [])
             let targetCenter: CLLocationCoordinate2D
             if allCoordinates.isEmpty {
                 targetCenter = latestCenter
@@ -1058,17 +1157,64 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
             registeredStyleIDs.insert(destinationStyleID)
         }
 
+
+        private func syncRouteIfPossible(_ mapView: KakaoMap) {
+            let shapeManager = mapView.getShapeManager()
+            registerRouteStyleIfNeeded(shapeManager)
+            guard let routeLayer = ensureRouteLayer(shapeManager) else { return }
+
+            if latestRouteCoordinates.count < 2 {
+                routeLayer.removeMapPolylineShape(shapeID: routeShapeID, callback: nil)
+                return
+            }
+
+            let points = latestRouteCoordinates.map { MapPoint(longitude: $0.longitude, latitude: $0.latitude) }
+            let polyline = MapPolyline(line: points, styleIndex: 0)
+
+            print("[DirectionsMap] route coordinate count:", latestRouteCoordinates.count)
+            if let shape = routeLayer.getMapPolylineShape(shapeID: routeShapeID) {
+                shape.changeStyleAndData(styleID: routeStyleID, lines: [polyline])
+                shape.show()
+            } else {
+                let options = MapPolylineShapeOptions(shapeID: routeShapeID, styleID: routeStyleID, zOrder: 0)
+                options.polylines = [polyline]
+                let shape = routeLayer.addMapPolylineShape(options, callback: nil)
+                shape?.show()
+            }
+            routeLayer.showMapPolylineShapes(shapeIDs: [routeShapeID])
+        }
+
+        private func registerRouteStyleIfNeeded(_ shapeManager: ShapeManager) {
+            guard !registeredStyleIDs.contains(routeStyleID) else { return }
+            let style = PerLevelPolylineStyle(
+                bodyColor: UIColor(red: 0.23, green: 0.51, blue: 0.96, alpha: 1),
+                bodyWidth: 10,
+                strokeColor: UIColor.white,
+                strokeWidth: 4,
+                level: 0
+            )
+            let polylineStyle = PolylineStyle(styles: [style])
+            let styleSet = PolylineStyleSet(styleSetID: routeStyleID, styles: [polylineStyle])
+            shapeManager.addPolylineStyleSet(styleSet)
+            registeredStyleIDs.insert(routeStyleID)
+        }
+
+        private func ensureRouteLayer(_ shapeManager: ShapeManager) -> ShapeLayer? {
+            if let layer = shapeManager.getShapeLayer(layerID: routeLayerID) { return layer }
+            return shapeManager.addShapeLayer(layerID: routeLayerID, zOrder: 1, passType: .overlay)
+        }
+
         private func makeParticipantMarkerImage(item: DirectionsAnnotation) -> UIImage? {
             if let data = item.profileImageData,
                let image = UIImage(data: data),
                let normalizedImage = normalizedMarkerSourceImage(from: image) {
                 return circularAvatarImage(from: normalizedImage, tint: item.tint)
             }
-            return makeAvatarPlaceholderImage(fill: item.tint, systemName: "person.fill", size: CGSize(width: 48, height: 48), symbolPointSize: 16)
+            return makeAvatarPlaceholderImage(fill: item.tint, systemName: "person.fill", size: CGSize(width: 54, height: 54), symbolPointSize: 18)
         }
 
         private func circularAvatarImage(from image: UIImage, tint: UIColor) -> UIImage? {
-            let size = CGSize(width: 48, height: 48)
+            let size = CGSize(width: 54, height: 54)
             UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
             defer { UIGraphicsEndImageContext() }
             let rect = CGRect(origin: .zero, size: size)
@@ -1146,24 +1292,41 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
                     width: iconWidth,
                     height: iconHeight
                 )
-                iconImage.draw(in: symbolRect)
+                context.saveGState()
+                context.translateBy(x: symbolRect.midX, y: symbolRect.midY)
+                context.rotate(by: .pi)
+                iconImage.draw(in: CGRect(x: -iconWidth / 2, y: -iconHeight / 2, width: iconWidth, height: iconHeight))
+                context.restoreGState()
             }
             guard let rendered = UIGraphicsGetImageFromCurrentImageContext() else { return nil }
             return normalizedMarkerSourceImage(from: rendered) ?? rendered
         }
 
         private func normalizedMarkerSourceImage(from image: UIImage) -> UIImage? {
-            let format = UIGraphicsImageRendererFormat.default()
-            format.opaque = false
-            format.scale = max(image.scale, 1)
-            let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
-            let rendered = renderer.image { _ in
-                image.draw(in: CGRect(origin: .zero, size: image.size))
+            let targetWidth = max(Int(ceil(image.size.width)), 1)
+            let targetHeight = max(Int(ceil(image.size.height)), 1)
+            guard let sourceCGImage = image.cgImage,
+                  let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return image }
+            let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            guard let context = CGContext(
+                data: nil,
+                width: targetWidth,
+                height: targetHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: targetWidth * 4,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo
+            ) else {
+                return image
             }
-            guard let pngData = rendered.pngData(), let normalized = UIImage(data: pngData) else {
-                return rendered
-            }
-            return normalized
+
+            context.interpolationQuality = .high
+            context.translateBy(x: 0, y: CGFloat(targetHeight))
+            context.scaleBy(x: 1, y: -1)
+            context.draw(sourceCGImage, in: CGRect(x: 0, y: 0, width: CGFloat(targetWidth), height: CGFloat(targetHeight)))
+
+            guard let cgImage = context.makeImage() else { return image }
+            return UIImage(cgImage: cgImage, scale: 1, orientation: .up)
         }
     }
 }
@@ -1202,7 +1365,7 @@ private struct DirectionRouteOptionDisplay: Identifiable {
     let steps: [DirectionStepDisplay]
     let polylineCoordinates: [CLLocationCoordinate2D]
 
-    init(option: RouteOptionResponse, index: Int) {
+    init(option: RouteOptionResponse, index: Int, fallbackOrigin: CLLocationCoordinate2D? = nil, fallbackDestination: CLLocationCoordinate2D? = nil) {
         title = "경로 \(index + 1)"
 
         var parts: [String] = []
@@ -1210,7 +1373,7 @@ private struct DirectionRouteOptionDisplay: Identifiable {
             parts.append("\(totalDuration)분")
         }
         if let totalDistance = option.totalDistance {
-            parts.append("\(totalDistance)m")
+            parts.append(Self.formatKilometers(totalDistance))
         }
         if let transferCount = option.transferCount {
             parts.append("환승 \(transferCount)회")
@@ -1218,7 +1381,14 @@ private struct DirectionRouteOptionDisplay: Identifiable {
         summaryText = parts.isEmpty ? nil : parts.joined(separator: " · ")
         let routeSteps = option.routes ?? []
         steps = routeSteps.map { DirectionStepDisplay(step: $0) }
-        polylineCoordinates = routeSteps.flatMap { Self.parseLineString($0.linestring) }
+        let parsedCoordinates = routeSteps.flatMap { Self.parseLineString($0.linestring) }
+        if !parsedCoordinates.isEmpty {
+            polylineCoordinates = parsedCoordinates
+        } else if let fallbackOrigin, let fallbackDestination {
+            polylineCoordinates = [fallbackOrigin, fallbackDestination]
+        } else {
+            polylineCoordinates = []
+        }
     }
 
     private static func parseLineString(_ lineString: String?) -> [CLLocationCoordinate2D] {
@@ -1230,6 +1400,11 @@ private struct DirectionRouteOptionDisplay: Identifiable {
                 guard values.count == 2, let lon = Double(values[0]), let lat = Double(values[1]) else { return nil }
                 return CLLocationCoordinate2D(latitude: lat, longitude: lon)
             }
+    }
+
+    static func formatKilometers(_ meters: Int) -> String {
+        let kilometers = Double(meters) / 1000.0
+        return String(format: "%.2fkm", kilometers)
     }
 }
 
@@ -1254,7 +1429,7 @@ private struct DirectionStepDisplay: Identifiable {
 
         let instruction = step.instruction?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "경로 정보"
         let duration = step.duration.map { " · \($0)분" } ?? ""
-        let distance = step.distance.map { " · \($0)m" } ?? ""
+        let distance = step.distance.map { " · \(DirectionRouteOptionDisplay.formatKilometers($0))" } ?? ""
         displayText = "\(prefix) \(instruction)\(duration)\(distance)"
     }
 }

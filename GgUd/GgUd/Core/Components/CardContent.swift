@@ -11,6 +11,7 @@ struct HomePromise: Identifiable {
     let statusText: String
     let confirmedPlace: String?
     let canComplete: Bool
+    let canCancel: Bool
     let participantAvatars: [HomeParticipantAvatar]
 }
 
@@ -26,6 +27,7 @@ struct CardContent: View {
     let isScheduled: Bool
     var isCompleting: Bool = false
     var onCompleteTapped: (() -> Void)? = nil
+    var onCancelTapped: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -75,6 +77,17 @@ struct CardContent: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(isCompleting)
+                    } else if let onCancelTapped {
+                        Button(action: onCancelTapped) {
+                            Text("약속 취소")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Color(hex: "#B91C1C"))
+                                .frame(width: 68)
+                                .padding(.vertical, 6)
+                                .background(Color(hex: "#FEE2E2"))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }

@@ -46,6 +46,8 @@ struct MidpointView: View {
     @EnvironmentObject private var userSession: UserSessionStore
 
     let promiseId: Int64
+    let initialStatus: String?
+    let initialMidpointTitle: String?
 
     @State private var isSheetExpanded: Bool = false
     @GestureState private var dragOffset: CGFloat = 0
@@ -78,6 +80,18 @@ struct MidpointView: View {
     @State private var recommendations: [PlaceItem] = []
     @State private var finalPlaceRecommendations: [FinalPlaceItem] = []
 
+    init(promiseId: Int64, initialStatus: String? = nil, initialMidpointTitle: String? = nil) {
+        self.promiseId = promiseId
+        self.initialStatus = initialStatus
+        self.initialMidpointTitle = initialMidpointTitle
+        _currentPromiseStatus = State(initialValue: (initialStatus ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased())
+        let normalized = (initialStatus ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        _stage = State(initialValue: normalized == "MIDPOINT_CONFIRMED" || normalized == "PLACE_CONFIRMED" ? .finalPlace : .midpoint)
+        _isShowingInfoCard = State(initialValue: !(normalized == "MIDPOINT_CONFIRMED" || normalized == "PLACE_CONFIRMED"))
+        _selectedMidpointTitle = State(initialValue: initialMidpointTitle)
+        _currentMidpointFallbackTitle = State(initialValue: initialMidpointTitle)
+    }
+
     var body: some View {
         ZStack {
             AppColors.background.ignoresSafeArea()
@@ -91,16 +105,28 @@ struct MidpointView: View {
 
                 GeometryReader { proxy in
                     let height = proxy.size.height
+                    let bottomInset = proxy.safeAreaInsets.bottom
                     let isFinalPlaceStage = stage == .finalPlace
                     let sheetHeight = isFinalPlaceStage ? min(560, height * 0.76) : min(380, height * 0.56)
+                    let sheetContainerHeight = sheetHeight + bottomInset + 18
                     let collapsedPeek = isFinalPlaceStage ? 310.0 : 170.0
                     let collapsedY = max(height - collapsedPeek, 0)
                     let expandedY = max(height - sheetHeight, 0)
                     let baseY = isSheetExpanded ? expandedY : collapsedY
+                    let shouldShowFloatingCTA = stage == .finalPlace && !selectedFinalPlaceKeys.isEmpty
 
                     ZStack(alignment: .topLeading) {
-                        mapPlaceholder
-                            .frame(width: proxy.size.width, height: proxy.size.height)
+                        if stage == .finalPlace && isLoading && finalPlaceRecommendations.isEmpty {
+                            Color.white
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                                .overlay {
+                                    ProgressView()
+                                        .progressViewStyle(.circular)
+                                }
+                        } else {
+                            mapPlaceholder
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                        }
 
                         VStack(spacing: 0) {
                             if stage == .midpoint, isShowingInfoCard {
@@ -114,7 +140,7 @@ struct MidpointView: View {
                         }
 
                         bottomSheet
-                            .frame(width: proxy.size.width, height: sheetHeight, alignment: .top)
+                            .frame(width: proxy.size.width, height: sheetContainerHeight, alignment: .top)
                             .offset(y: baseY + dragOffset)
                             .gesture(
                                 DragGesture()
@@ -132,6 +158,19 @@ struct MidpointView: View {
                                         }
                                     }
                             )
+
+                        if shouldShowFloatingCTA {
+                            VStack {
+                                Spacer()
+                                floatingFinalPlaceCTA
+                                    .padding(.horizontal, 16)
+                                    .padding(.bottom, 18)
+                            }
+                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .zIndex(2)
+                            .allowsHitTesting(true)
+                        }
                     }
                 }
             }
@@ -146,7 +185,9 @@ struct MidpointView: View {
         .toolbar(.hidden, for: .tabBar)
         .task(id: promiseId) {
             prepareMapLifecycle()
-            scheduleInfoCardAutoHide()
+            if stage == .midpoint {
+                scheduleInfoCardAutoHide()
+            }
             await loadMidpointData()
             connectStatusSocketIfPossible()
             restartStatusPollingIfNeeded()
@@ -186,6 +227,20 @@ struct MidpointView: View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 if stage == .finalPlace {
+                    Button(action: {
+                        Task { await changeMidpointSelection() }
+                    }) {
+                        Image("BackNavIcon")
+                            .renderingMode(.original)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 14, height: 13)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isLoading || isSubmittingSelection)
+                    .opacity((isLoading || isSubmittingSelection) ? 0.6 : 1)
+
                     VStack(alignment: .leading, spacing: 4) {
                         Text("장소 추천")
                             .font(.system(size: 18, weight: .bold))
@@ -261,12 +316,34 @@ struct MidpointView: View {
         .background(Color.white)
     }
 
+    private func normalizedDisplayTitle(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var midpointTitleCacheKey: String {
+        "confirmed_midpoint_title_\(promiseId)"
+    }
+
+    private func cacheMidpointTitleIfPossible(_ value: String?) {
+        guard let normalized = normalizedDisplayTitle(value) else { return }
+        UserDefaults.standard.set(normalized, forKey: midpointTitleCacheKey)
+    }
+
+    private func cachedMidpointTitle() -> String? {
+        normalizedDisplayTitle(UserDefaults.standard.string(forKey: midpointTitleCacheKey))
+    }
+
     private var selectedMidpointDisplayText: String {
-        if let selectedMidpointTitle, !selectedMidpointTitle.isEmpty {
-            return selectedMidpointTitle
+        if let selected = normalizedDisplayTitle(selectedMidpointTitle) {
+            return selected
         }
-        if let fallback = currentMidpointFallbackTitle, !fallback.isEmpty {
+        if let fallback = normalizedDisplayTitle(currentMidpointFallbackTitle) {
             return fallback
+        }
+        if let cached = cachedMidpointTitle() {
+            return cached
         }
         return "선택된 중간지점"
     }
@@ -591,7 +668,12 @@ struct MidpointView: View {
         }
         .padding(.top, 8)
         .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(
+            UnevenRoundedRectangle(
+                cornerRadii: RectangleCornerRadii(topLeading: 24, bottomLeading: 0, bottomTrailing: 0, topTrailing: 24),
+                style: .continuous
+            )
+        )
         .shadow(color: Color.black.opacity(0.1), radius: 16, x: 0, y: 6)
     }
 
@@ -616,54 +698,52 @@ struct MidpointView: View {
     }
 
     private var finalPlaceListView: some View {
-        VStack(spacing: 14) {
-            ScrollView(showsIndicators: false) {
-                LazyVStack(spacing: 14) {
-                    if finalPlaceRecommendations.isEmpty {
-                        Text("추천된 장소가 아직 없습니다")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(AppColors.subText)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 24)
-                    } else {
-                        ForEach(finalPlaceRecommendations) { item in
-                            finalPlaceCard(item)
-                        }
+        ScrollView(showsIndicators: false) {
+            LazyVStack(spacing: 14) {
+                if finalPlaceRecommendations.isEmpty {
+                    Text("추천된 장소가 아직 없습니다")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(AppColors.subText)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 24)
+                } else {
+                    ForEach(finalPlaceRecommendations) { item in
+                        finalPlaceCard(item)
                     }
                 }
-                .padding(.bottom, 12)
             }
-
-            if !finalPlaceRecommendations.isEmpty {
-                Button(action: {
-                    Task { await confirmSelectedFinalPlaces() }
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 15, weight: .bold))
-                        Text("\(selectedFinalPlaceKeys.count)개 장소로 약속 확정하기")
-                            .font(.system(size: 17, weight: .bold))
-                    }
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .background(
-                        LinearGradient(
-                            colors: selectedFinalPlaceKeys.isEmpty || isSubmittingSelection
-                                ? [Color(red: 0.70, green: 0.82, blue: 0.98), Color(red: 0.62, green: 0.77, blue: 0.97)]
-                                : [Color(red: 0.18, green: 0.62, blue: 0.98), Color(red: 0.23, green: 0.51, blue: 0.96)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .disabled(selectedFinalPlaceKeys.isEmpty || isSubmittingSelection)
-                .opacity((selectedFinalPlaceKeys.isEmpty || isSubmittingSelection) ? 0.75 : 1)
-                .padding(.bottom, 12)
-            }
+            .padding(.bottom, 132)
         }
+    }
+
+    private var floatingFinalPlaceCTA: some View {
+        Button(action: {
+            Task { await confirmSelectedFinalPlaces() }
+        }) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 15, weight: .bold))
+                Text("\(selectedFinalPlaceKeys.count)개 장소로 약속 확정하기")
+                    .font(.system(size: 17, weight: .bold))
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+            .background(
+                LinearGradient(
+                    colors: isSubmittingSelection
+                        ? [Color(red: 0.70, green: 0.82, blue: 0.98), Color(red: 0.62, green: 0.77, blue: 0.97)]
+                        : [Color(red: 0.18, green: 0.62, blue: 0.98), Color(red: 0.23, green: 0.51, blue: 0.96)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 8)
+        }
+        .buttonStyle(.plain)
+        .disabled(isSubmittingSelection)
+        .opacity(isSubmittingSelection ? 0.75 : 1)
     }
 
     private var loadingContent: some View {
@@ -756,21 +836,21 @@ struct MidpointView: View {
     private func finalPlaceCard(_ item: FinalPlaceItem) -> some View {
         let isSelected = isFinalPlaceSelected(item)
 
-        return HStack(alignment: .top, spacing: 14) {
-            placeThumbnail(for: item)
+        return HStack(alignment: .top, spacing: 12) {
+            placeThumbnail(for: item, isSelected: isSelected)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
-                            .font(.system(size: 16, weight: .bold))
+                            .font(.system(size: 15, weight: .bold))
                             .foregroundStyle(AppColors.text)
                             .multilineTextAlignment(.leading)
                             .lineLimit(2)
 
                         if !item.summary.isEmpty {
                             Text(item.summary)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(AppColors.subText)
                                 .multilineTextAlignment(.leading)
                                 .lineLimit(2)
@@ -784,26 +864,21 @@ struct MidpointView: View {
                     }) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(isSelected ? Color(red: 0.13, green: 0.78, blue: 0.44) : Color(red: 0.13, green: 0.78, blue: 0.44))
+                                .fill(Color(red: 0.133, green: 0.773, blue: 0.369))
                                 .frame(width: 24, height: 24)
 
-                            if isSelected {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(.white)
-                            } else {
-                                Image(systemName: "mappin.and.ellipse")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(.white)
-                            }
+                            Image("SelectedPlaceMapPinIcon")
+                                .resizable()
+                                .renderingMode(.original)
+                                .frame(width: 9, height: 11)
                         }
                     }
                     .buttonStyle(.plain)
-                    .disabled(isSubmittingSelection || item.coordinate == nil)
-                    .opacity((isSubmittingSelection || item.coordinate == nil) ? 0.65 : 1)
+                    .disabled(isSubmittingSelection)
+                    .opacity(isSubmittingSelection ? 0.65 : 1)
                 }
 
-                HStack(alignment: .center, spacing: 12) {
+                HStack(alignment: .center, spacing: 10) {
                     HStack(spacing: 4) {
                         Image(systemName: "figure.walk")
                             .font(.system(size: 13, weight: .semibold))
@@ -814,28 +889,37 @@ struct MidpointView: View {
                     }
 
                     Spacer(minLength: 0)
+
+                    if !item.categoryText.isEmpty {
+                        Text(item.categoryText)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(AppColors.subText)
+                            .lineLimit(1)
+                    }
                 }
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(Color(red: 0.976, green: 0.98, blue: 0.984))
+        .padding(.vertical, 10)
+        .background(isSelected ? Color(red: 0.941, green: 0.976, blue: 1.0) : Color(red: 0.976, green: 0.98, blue: 0.984))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(isSelected ? AppColors.primary : Color(red: 0.898, green: 0.906, blue: 0.922), lineWidth: isSelected ? 2 : 1)
+                .stroke(isSelected ? Color(red: 0.055, green: 0.647, blue: 0.914) : Color(red: 0.898, green: 0.906, blue: 0.922), lineWidth: 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .onTapGesture {
-            focusFinalPlaceMap(on: item.coordinate)
+            guard !isSubmittingSelection else { return }
+            toggleFinalPlaceSelection(item)
         }
-        .opacity((isSubmittingSelection || item.coordinate == nil) ? 0.65 : 1)
+        .opacity(isSubmittingSelection ? 0.65 : 1)
     }
 
     @ViewBuilder
-    private func placeThumbnail(for item: FinalPlaceItem) -> AnyView {
+    private func placeThumbnail(for item: FinalPlaceItem, isSelected: Bool) -> AnyView {
+        let baseThumbnail: AnyView
         if let imageURL = item.imageURL, let url = URL(string: imageURL) {
-            return AnyView(
+            baseThumbnail = AnyView(
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case let .success(image):
@@ -852,14 +936,14 @@ struct MidpointView: View {
                             )
                     }
                 }
-                .frame(width: 88, height: 88)
+                .frame(width: 76, height: 76)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             )
         } else {
-            return AnyView(
+            baseThumbnail = AnyView(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color(red: 0.95, green: 0.96, blue: 0.98))
-                    .frame(width: 88, height: 88)
+                    .frame(width: 76, height: 76)
                     .overlay(
                         Image(systemName: "fork.knife")
                             .font(.system(size: 22, weight: .bold))
@@ -867,6 +951,24 @@ struct MidpointView: View {
                     )
             )
         }
+
+        return AnyView(
+            ZStack {
+                baseThumbnail
+
+                if isSelected {
+                    Circle()
+                        .fill(Color(red: 0.15, green: 0.68, blue: 0.95))
+                        .frame(width: 32, height: 32)
+                        .overlay(
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                        )
+                }
+            }
+            .frame(width: 76, height: 76)
+        )
     }
 
     private var trailingCircleArrow: some View {
@@ -972,8 +1074,6 @@ struct MidpointView: View {
 
         isLoading = true
         loadError = nil
-        stage = .midpoint
-        finalPlaceRecommendations = []
 
         let tokenType = userSession.backendTokenType ?? "Bearer"
 
@@ -997,6 +1097,14 @@ struct MidpointView: View {
         }()
         let effectiveStatus = mergedPromiseStatus(existing: currentPromiseStatus, incoming: normalizedStatus)
         currentPromiseStatus = effectiveStatus
+
+        if effectiveStatus == "MIDPOINT_CONFIRMED" || effectiveStatus == "PLACE_CONFIRMED" {
+            stage = .finalPlace
+            isShowingInfoCard = false
+        } else {
+            stage = .midpoint
+            finalPlaceRecommendations = []
+        }
 
         let participantsResult: Result<[PromiseParticipantResponse], Error> = await withCheckedContinuation { continuation in
             PromiseAPIClient.shared.getParticipants(
@@ -1099,7 +1207,9 @@ struct MidpointView: View {
         switch mapDataResult {
         case let .success(mapData):
             latestMapData = mapData
-            currentMidpointFallbackTitle = mapData.recommendedMidpoints?.first?.name
+            let midpointNameFromMapData = mapData.destination?.name ?? mapData.recommendedMidpoints?.first?.name
+            currentMidpointFallbackTitle = midpointNameFromMapData
+            cacheMidpointTitleIfPossible(midpointNameFromMapData)
             applyMapData(mapData)
         case .failure:
             break
@@ -1114,16 +1224,45 @@ struct MidpointView: View {
         }
 
         if effectiveStatus == "MIDPOINT_CONFIRMED" {
-            selectedMidpointTitle = latestMapData?.recommendedMidpoints?.first?.name
-            currentMidpointFallbackTitle = latestMapData?.recommendedMidpoints?.first?.name
-            currentMidpointFallbackTitle = latestMapData?.recommendedMidpoints?.first?.name
+            let midpointNameFromMapData = normalizedDisplayTitle(latestMapData?.destination?.name)
+                ?? normalizedDisplayTitle(latestMapData?.recommendedMidpoints?.first?.name)
+
+            let midpointNameResult: Result<MidpointRecommendationResponse, Error> = await withCheckedContinuation { continuation in
+                PromiseAPIClient.shared.getMidpointRecommendations(
+                    promiseId: promiseId,
+                    accessToken: accessToken,
+                    tokenType: tokenType
+                ) { result in
+                    continuation.resume(returning: result)
+                }
+            }
+
+            let midpointNameFromRecommendations: String?
+            switch midpointNameResult {
+            case let .success(response):
+                midpointNameFromRecommendations = normalizedDisplayTitle(response.recommendedStations?.first?.stationName)
+            case .failure:
+                midpointNameFromRecommendations = nil
+            }
+
+            let resolvedMidpointTitle = midpointNameFromRecommendations ?? midpointNameFromMapData ?? cachedMidpointTitle()
+            print("[Midpoint] resolved confirmed midpoint title:", resolvedMidpointTitle ?? "nil")
+            selectedMidpointTitle = resolvedMidpointTitle
+            currentMidpointFallbackTitle = resolvedMidpointTitle
+            cacheMidpointTitleIfPossible(resolvedMidpointTitle)
+
             isLoading = false
             await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: selectedAIQuery)
             return
         }
 
         if effectiveStatus == "PLACE_CONFIRMED" {
-            selectedMidpointTitle = latestMapData?.recommendedMidpoints?.first?.name
+            let resolvedPlaceConfirmedMidpointTitle = latestMapData?.destination?.name
+                ?? latestMapData?.recommendedMidpoints?.first?.name
+                ?? cachedMidpointTitle()
+            selectedMidpointTitle = resolvedPlaceConfirmedMidpointTitle
+            currentMidpointFallbackTitle = resolvedPlaceConfirmedMidpointTitle
+            cacheMidpointTitleIfPossible(resolvedPlaceConfirmedMidpointTitle)
             isLoading = false
             returnHomeImmediatelyAfterPlaceConfirmed(source: "load-midpoint-data")
             return
@@ -1213,6 +1352,21 @@ struct MidpointView: View {
         return raw
     }
 
+
+    private func normalizedAIQueryText(_ raw: String) -> String {
+        var normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = ["카페", "식당", "술집", "레스토랑", "음식점", "펍", "바"]
+        for token in tokens {
+            normalized = normalized.replacingOccurrences(
+                of: #"(?<!\s)\#(token)"#,
+                with: " " + token,
+                options: .regularExpression
+            )
+        }
+        normalized = normalized.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        return normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func averageCenterCoordinate() -> CLLocationCoordinate2D? {
         let coords = participants.compactMap(\.coordinate)
         guard !coords.isEmpty else { return nil }
@@ -1233,17 +1387,20 @@ struct MidpointView: View {
     private func focusFinalPlaceMap(on coordinate: CLLocationCoordinate2D?) {
         guard let coordinate else { return }
         mapCenterCoordinate = CLLocationCoordinate2D(
-            latitude: coordinate.latitude - 0.0045,
+            latitude: coordinate.latitude - 0.0028,
             longitude: coordinate.longitude
         )
-        mapZoomLevel = 14
+        mapZoomLevel = 16
     }
 
     private func applyMapData(_ mapData: PromiseMapDataResponse) {
         if stage == .finalPlace,
-           let destination = mapData.destination,
-           let lat = destination.latitude,
-           let lon = destination.longitude {
+           let firstRecommendationCoordinate = finalPlaceRecommendations.first?.coordinate {
+            focusFinalPlaceMap(on: firstRecommendationCoordinate)
+        } else if stage == .finalPlace,
+                  let destination = mapData.destination,
+                  let lat = destination.latitude,
+                  let lon = destination.longitude {
             mapCenterCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
             mapZoomLevel = 12
         } else if let midpoint = (mapData.recommendedMidpoints ?? []).first,
@@ -1433,6 +1590,8 @@ struct MidpointView: View {
         switch result {
         case .success:
             selectedMidpointTitle = item.title
+            currentMidpointFallbackTitle = item.title
+            cacheMidpointTitleIfPossible(item.title)
             selectedAIQuery = nil
             await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: nil)
         case let .failure(error):
@@ -1499,6 +1658,16 @@ struct MidpointView: View {
 
         switch result {
         case let .success(response):
+            if (response.recommendations ?? []).isEmpty,
+               let query,
+               !query.isEmpty {
+                let normalizedQuery = normalizedAIQueryText(query)
+                if normalizedQuery != query {
+                    await loadFinalPlaceRecommendations(tab: tab, query: normalizedQuery)
+                    return
+                }
+            }
+
             finalPlaceRecommendations = (response.recommendations ?? []).map { place in
                 let coordinate: CLLocationCoordinate2D?
                 if let lat = place.latitude, let lon = place.longitude {
@@ -1508,7 +1677,8 @@ struct MidpointView: View {
                 }
                 let distanceText: String
                 if let distance = place.distance_from_midpoint {
-                    distanceText = "\(max(1, Int(distance.rounded())))m"
+                    let kilometers = max(0.01, distance / 1000.0)
+                    distanceText = String(format: "%.2fkm", kilometers)
                 } else {
                     distanceText = "-"
                 }
@@ -1554,19 +1724,108 @@ struct MidpointView: View {
 
     @MainActor
     private func changeMidpointSelection() async {
-        actionMessage = "현재 서버 상태에서는 중간지점을 다시 변경할 수 없어요. 새로운 약속에서 다시 선택해주세요."
-        isShowingActionAlert = true
+        guard isCurrentUserHost else {
+            actionMessage = "중간지점 변경은 호스트만 할 수 있어요."
+            isShowingActionAlert = true
+            return
+        }
+
+        await resetMidpointSelection()
+    }
+
+    @MainActor
+    private func loadMidpointRecommendationsForViewing() async {
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            loadError = "로그인 정보가 없습니다."
+            return
+        }
+
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+        isLoading = true
+        loadError = nil
+
+        let mapDataResult: Result<PromiseMapDataResponse, Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getMapData(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch mapDataResult {
+        case let .success(mapData):
+            let midpointNameFromMapData = mapData.destination?.name ?? mapData.recommendedMidpoints?.first?.name
+            currentMidpointFallbackTitle = midpointNameFromMapData ?? currentMidpointFallbackTitle
+            cacheMidpointTitleIfPossible(midpointNameFromMapData)
+            applyMapData(mapData)
+        case .failure:
+            break
+        }
+
+        let recommendationsValue: Result<MidpointRecommendationResponse, Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getMidpointRecommendations(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch recommendationsValue {
+        case let .success(response):
+            recommendations = (response.recommendedStations ?? []).map { station in
+                let coordinate: CLLocationCoordinate2D?
+                if let lat = station.latitude, let lon = station.longitude {
+                    coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                } else {
+                    coordinate = nil
+                }
+
+                return PlaceItem(
+                    stationId: station.stationId,
+                    title: station.stationName ?? "추천 역",
+                    subtitle: station.lineName ?? "노선 정보 없음",
+                    timeText: "평균 \((station.averageTravelTimeMinutes ?? 0))분",
+                    coordinate: coordinate
+                )
+            }
+
+            if let stationName = normalizedDisplayTitle(response.recommendedStations?.first?.stationName) {
+                currentMidpointFallbackTitle = stationName
+                cacheMidpointTitleIfPossible(stationName)
+            }
+
+            if let midpoint = response.calculatedMidpoint,
+               let lat = midpoint.latitude,
+               let lon = midpoint.longitude {
+                mapCenterCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                mapZoomLevel = 12
+            } else if let firstCoordinate = recommendations.first?.coordinate {
+                focusMap(on: firstCoordinate)
+            }
+            isLoading = false
+
+        case let .failure(error):
+            recommendations = []
+            isLoading = false
+            loadError = error.localizedDescription
+        }
     }
 
     @MainActor
     private func requestAIRecommendations() async {
         let trimmed = aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        selectedAIQuery = trimmed
+        let normalizedQuery = normalizedAIQueryText(trimmed)
+        selectedAIQuery = normalizedQuery
+        aiPromptText = normalizedQuery
         withAnimation(.easeInOut(duration: 0.2)) {
             isShowingAIModal = false
         }
-        await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: trimmed)
+        await loadFinalPlaceRecommendations(tab: selectedPlaceTab, query: normalizedQuery)
     }
 
     @MainActor
@@ -1650,9 +1909,16 @@ struct MidpointView: View {
 
         switch result {
         case .success:
+            selectedPlaceTab = .all
+            selectedAIQuery = nil
+            selectedFinalPlaceKeys = []
+            finalPlaceRecommendations = []
+            currentPromiseStatus = "SELECTING_MIDPOINT"
+            stage = .midpoint
+            isSheetExpanded = false
+            isShowingInfoCard = true
+            scheduleInfoCardAutoHide()
             await loadMidpointData()
-            actionMessage = "중간지점을 다시 추천받았어요."
-            isShowingActionAlert = true
         case let .failure(error):
             actionMessage = error.localizedDescription
             isShowingActionAlert = true
@@ -1933,11 +2199,11 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
             guard let participantLayer = ensureLabelLayer(
                 labelManager,
                 layerID: participantLayerID,
-                zOrder: 10
+                zOrder: 30
             ), let recommendationLayer = ensureLabelLayer(
                 labelManager,
                 layerID: recommendationLayerID,
-                zOrder: 20
+                zOrder: 10
             ) else {
                 return
             }
@@ -2040,7 +2306,7 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
                 symbol: makeCircularSymbolImage(
                     fill: UIColor(red: 0.22, green: 0.62, blue: 0.96, alpha: 1),
                     systemName: "mappin.circle.fill",
-                    size: CGSize(width: 48, height: 48),
+                    size: CGSize(width: 54, height: 54),
                     symbolPointSize: 14
                 ),
                 anchorPoint: CGPoint(x: 0.5, y: 1.0)
@@ -2059,13 +2325,13 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
             return makeAvatarPlaceholderImage(
                 fill: UIColor(item.color),
                 systemName: item.icon,
-                size: CGSize(width: 48, height: 48),
-                symbolPointSize: 16
+                size: CGSize(width: 54, height: 54),
+                symbolPointSize: 18
             )
         }
 
         private func circularAvatarImage(from image: UIImage, tint: UIColor) -> UIImage? {
-            let size = CGSize(width: 48, height: 48)
+            let size = CGSize(width: 54, height: 54)
             UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
             defer { UIGraphicsEndImageContext() }
             let rect = CGRect(origin: .zero, size: size)
@@ -2135,32 +2401,49 @@ private struct KakaoMidpointMapView: UIViewRepresentable {
 
             let iconImage: UIImage? = UIImage(named: "MapPinGlyph") ?? UIImage(systemName: systemName, withConfiguration: UIImage.SymbolConfiguration(pointSize: symbolPointSize, weight: .bold))?.withTintColor(.white, renderingMode: .alwaysOriginal)
             if let iconImage {
-                let iconWidth: CGFloat = 13.5
-                let iconHeight: CGFloat = 16.3
+                let iconWidth: CGFloat = 16.3
+                let iconHeight: CGFloat = 19.3
                 let symbolRect = CGRect(
                     x: (size.width - iconWidth) / 2,
                     y: (size.height - iconHeight) / 2,
                     width: iconWidth,
                     height: iconHeight
                 )
-                iconImage.draw(in: symbolRect)
+                context.saveGState()
+                context.translateBy(x: symbolRect.midX, y: symbolRect.midY)
+                context.rotate(by: .pi)
+                iconImage.draw(in: CGRect(x: -iconWidth / 2, y: -iconHeight / 2, width: iconWidth, height: iconHeight))
+                context.restoreGState()
             }
             guard let rendered = UIGraphicsGetImageFromCurrentImageContext() else { return nil }
             return normalizedMarkerSourceImage(from: rendered) ?? rendered
         }
 
         private func normalizedMarkerSourceImage(from image: UIImage) -> UIImage? {
-            let format = UIGraphicsImageRendererFormat.default()
-            format.opaque = false
-            format.scale = max(image.scale, 1)
-            let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
-            let rendered = renderer.image { _ in
-                image.draw(in: CGRect(origin: .zero, size: image.size))
+            let targetWidth = max(Int(ceil(image.size.width)), 1)
+            let targetHeight = max(Int(ceil(image.size.height)), 1)
+            guard let sourceCGImage = image.cgImage,
+                  let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return image }
+            let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            guard let context = CGContext(
+                data: nil,
+                width: targetWidth,
+                height: targetHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: targetWidth * 4,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo
+            ) else {
+                return image
             }
-            guard let pngData = rendered.pngData(), let normalized = UIImage(data: pngData) else {
-                return rendered
-            }
-            return normalized
+
+            context.interpolationQuality = .high
+            context.translateBy(x: 0, y: CGFloat(targetHeight))
+            context.scaleBy(x: 1, y: -1)
+            context.draw(sourceCGImage, in: CGRect(x: 0, y: 0, width: CGFloat(targetWidth), height: CGFloat(targetHeight)))
+
+            guard let cgImage = context.makeImage() else { return image }
+            return UIImage(cgImage: cgImage, scale: 1, orientation: .up)
         }
     }
 }

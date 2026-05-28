@@ -148,29 +148,111 @@ struct HistoryView: View {
         isLoading = true
         loadError = nil
 
-        await withCheckedContinuation { continuation in
+        let result: Result<[BackendPromise], Error> = await withCheckedContinuation { continuation in
             PromiseAPIClient.shared.getMyPromises(
                 accessToken: accessToken,
                 tokenType: userSession.backendTokenType ?? "Bearer",
                 page: 0,
                 size: 100
             ) { result in
-                DispatchQueue.main.async {
-                    isLoading = false
+                continuation.resume(returning: result)
+            }
+        }
 
-                    switch result {
-                    case let .success(promises):
-                        items = promises
-                            .compactMap(HistoryItem.init)
-                        loadError = nil
-                    case .failure:
-                        items = []
-                        loadError = "히스토리를 불러오지 못했습니다."
-                    }
+        switch result {
+        case let .success(promises):
+            items = await enrichHistoryItems(promises)
+            loadError = nil
+        case .failure:
+            items = []
+            loadError = "히스토리를 불러오지 못했습니다."
+        }
 
-                    continuation.resume()
+        isLoading = false
+    }
+
+    private func enrichHistoryItems(_ promises: [BackendPromise]) async -> [HistoryItem] {
+        let tokenType = userSession.backendTokenType ?? "Bearer"
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            return promises.compactMap(HistoryItem.init)
+        }
+
+        var enriched: [HistoryItem] = []
+
+        await withTaskGroup(of: (Int, HistoryItem?).self) { group in
+            for (index, promise) in promises.enumerated() {
+                group.addTask {
+                    guard let baseItem = HistoryItem(promise) else { return (index, nil) }
+                    guard let promiseId = promise.id else { return (index, baseItem) }
+
+                    let avatars = await self.fetchParticipantAvatars(
+                        promiseId: promiseId,
+                        accessToken: accessToken,
+                        tokenType: tokenType,
+                        fallbackCount: baseItem.memberCount
+                    )
+
+                    let item = HistoryItem(
+                        promiseId: baseItem.promiseId,
+                        title: baseItem.title,
+                        dateText: baseItem.dateText,
+                        timeText: baseItem.timeText,
+                        memberCount: baseItem.memberCount,
+                        location: baseItem.location,
+                        status: baseItem.status,
+                        hostId: baseItem.hostId,
+                        participantAvatars: avatars
+                    )
+                    return (index, item)
                 }
             }
+
+            var buffer: [(Int, HistoryItem?)] = []
+            for await value in group {
+                buffer.append(value)
+            }
+
+            buffer
+                .sorted { $0.0 < $1.0 }
+                .forEach { _, item in
+                    if let item {
+                        enriched.append(item)
+                    }
+                }
+        }
+
+        return enriched
+    }
+
+    private func fetchParticipantAvatars(
+        promiseId: Int64,
+        accessToken: String,
+        tokenType: String,
+        fallbackCount: Int
+    ) async -> [HomeParticipantAvatar] {
+        let result: Result<[PromiseParticipantResponse], Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.getParticipants(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: tokenType
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch result {
+        case let .success(participants):
+            let avatars = participants.map { participant in
+                HomeParticipantAvatar(
+                    userId: participant.userId,
+                    profileImageURL: participant.profileImageUrl,
+                    profileImageData: participant.userId == userSession.kakaoUserId ? userSession.profileImageData : nil
+                )
+            }
+            return avatars.isEmpty ? Array(repeating: HomeParticipantAvatar(userId: nil, profileImageURL: nil, profileImageData: nil), count: max(1, fallbackCount)) : avatars
+        case let .failure(error):
+            print("[History] failed to fetch participants for promiseId \(promiseId):", error.localizedDescription)
+            return Array(repeating: HomeParticipantAvatar(userId: nil, profileImageURL: nil, profileImageData: nil), count: max(1, fallbackCount))
         }
     }
 }
@@ -291,8 +373,6 @@ private extension HistoryItem {
         switch rawStatus {
         case "COMPLETED", "DONE", "FINISHED", "PROMISE_COMPLETED":
             historyStatus = .done
-        case "CANCELED", "CANCELLED":
-            historyStatus = .canceled
         default:
             return nil
         }
@@ -305,7 +385,8 @@ private extension HistoryItem {
             memberCount: max(1, Int(promise.participantCount ?? 1)),
             location: promise.confirmedPlaceName ?? "장소 미정",
             status: historyStatus,
-            hostId: promise.hostId
+            hostId: promise.hostId,
+            participantAvatars: Array(repeating: HomeParticipantAvatar(userId: nil, profileImageURL: nil, profileImageData: nil), count: max(1, Int(promise.participantCount ?? 1)))
         )
     }
 }

@@ -23,8 +23,12 @@ struct HomeView: View {
     @State private var joinAlertMessage: String?
     @State private var joinedPromiseId: Int64?
     @State private var presentedWaitingRoomPromiseId: Int64?
+    @State private var selectedMidpointPromiseId: Int64?
+    @State private var selectedMidpointInitialStatus: String?
+    @State private var selectedMidpointInitialTitle: String?
     @State private var selectedMapPromise: HomePromise?
     @State private var promisePendingCompletion: HomePromise?
+    @State private var promisePendingCancellation: HomePromise?
     @State private var isCompletingPromiseId: Int64?
     @State private var completionAlertMessage: String?
     @EnvironmentObject private var userSession: UserSessionStore
@@ -66,6 +70,9 @@ struct HomeView: View {
                                         isCompleting: isCompletingPromiseId == item.promiseId,
                                         onCompleteTapped: item.canComplete ? {
                                             promisePendingCompletion = item
+                                        } : nil,
+                                        onCancelTapped: item.canCancel ? {
+                                            promisePendingCancellation = item
                                         } : nil
                                     )
                                     .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -77,7 +84,7 @@ struct HomeView: View {
                                             return
                                         }
 
-                                        if selectedSegment == .scheduled, item.confirmedPlace == nil {
+                                        if selectedSegment == .scheduled {
                                             Task {
                                                 await openScheduledPromiseIfNeeded(promiseId: promiseId)
                                             }
@@ -133,6 +140,19 @@ struct HomeView: View {
             }
         } message: { item in
             Text("\(item.title) 약속을 종료할까요? 종료 후에는 진행중인 약속에서 사라져요.")
+        }
+        .alert("약속 취소", isPresented: Binding(
+            get: { promisePendingCancellation != nil },
+            set: { if !$0 { promisePendingCancellation = nil } }
+        ), presenting: promisePendingCancellation) { item in
+            Button("닫기", role: .cancel) { promisePendingCancellation = nil }
+            Button("취소", role: .destructive) {
+                Task {
+                    await cancelPromise(item)
+                }
+            }
+        } message: { item in
+            Text("\(item.title) 약속을 취소할까요? 취소 후에는 예정된 약속에서 사라져요.")
         }
         .alert("약속 종료", isPresented: Binding(
             get: { completionAlertMessage != nil },
@@ -206,6 +226,8 @@ struct HomeView: View {
             print("[Home] before return home joinedPromiseId:", joinedPromiseId as Any, "presentedWaitingRoomPromiseId:", presentedWaitingRoomPromiseId as Any)
             selectedSegment = .scheduled
             joinedPromiseId = nil
+            selectedMidpointPromiseId = nil
+            selectedMidpointInitialStatus = nil
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 presentedWaitingRoomPromiseId = nil
                 print("[Home] cleared presentedWaitingRoomPromiseId after waitingRoomShouldReturnHome")
@@ -216,6 +238,9 @@ struct HomeView: View {
             print("[Home] before close flow joinedPromiseId:", joinedPromiseId as Any, "presentedWaitingRoomPromiseId:", presentedWaitingRoomPromiseId as Any)
             selectedSegment = .scheduled
             joinedPromiseId = nil
+            selectedMidpointPromiseId = nil
+            selectedMidpointInitialStatus = nil
+            selectedMidpointInitialTitle = nil
             showJoinSheet = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 presentedWaitingRoomPromiseId = nil
@@ -260,6 +285,29 @@ struct HomeView: View {
 
                 NavigationLink(
                     destination: Group {
+                        if let selectedMidpointPromiseId {
+                            MidpointView(promiseId: selectedMidpointPromiseId, initialStatus: selectedMidpointInitialStatus, initialMidpointTitle: selectedMidpointInitialTitle)
+                        } else {
+                            EmptyView()
+                        }
+                    },
+                    isActive: Binding(
+                        get: { selectedMidpointPromiseId != nil },
+                        set: {
+                            if !$0 {
+                                selectedMidpointPromiseId = nil
+                                selectedMidpointInitialStatus = nil
+                                selectedMidpointInitialTitle = nil
+                            }
+                        }
+                    )
+                ) {
+                    EmptyView()
+                }
+                .hidden()
+
+                NavigationLink(
+                    destination: Group {
                         if let selectedMapPromise, let promiseId = selectedMapPromise.promiseId {
                             MapView(promiseId: promiseId, title: selectedMapPromise.title)
                         } else {
@@ -290,6 +338,8 @@ struct HomeView: View {
         }
 
         let tokenType = userSession.backendTokenType ?? "Bearer"
+
+        let cachedMidpointTitle = UserDefaults.standard.string(forKey: "confirmed_midpoint_title_\(promiseId)")
         let statusResult: Result<PromiseStatusResponse, Error> = await withCheckedContinuation { continuation in
             PromiseAPIClient.shared.getPromiseStatus(
                 promiseId: promiseId,
@@ -309,6 +359,13 @@ struct HomeView: View {
             if normalizedStatus == "PLACE_CONFIRMED" {
                 print("[Home] promiseId \(promiseId) already PLACE_CONFIRMED. staying on home")
                 await loadPromises()
+                return
+            }
+
+            if ["SELECTING_MIDPOINT", "MIDPOINT_CONFIRMED", "ALL_LOCATIONS_SUBMITTED"].contains(normalizedStatus) {
+                selectedMidpointInitialStatus = normalizedStatus
+                selectedMidpointInitialTitle = cachedMidpointTitle
+                selectedMidpointPromiseId = promiseId
                 return
             }
 
@@ -374,7 +431,7 @@ struct HomeView: View {
 
         guard showJoinSheet else { return }
 
-        if trimmed.isEmpty {
+        guard trimmed.count == 6 else {
             invitePreview = nil
             invitePreviewError = nil
             isLoadingInvitePreview = false
@@ -405,9 +462,9 @@ struct HomeView: View {
                     print("[InvitePreview] promiseDateTime raw:", promise.promiseDateTime ?? "nil")
                     invitePreview = promise
                     invitePreviewError = nil
-                case let .failure(error):
+                case .failure:
                     invitePreview = nil
-                    invitePreviewError = friendlyInvitePreviewErrorMessage(error)
+                    invitePreviewError = "초대 정보를 불러오지 못했어요.\n코드를 다시 확인해주세요."
                 }
             }
         }
@@ -550,6 +607,7 @@ struct HomeView: View {
                         statusText: mapped.promise.statusText,
                         confirmedPlace: mapped.promise.confirmedPlace,
                         canComplete: mapped.promise.canComplete,
+                        canCancel: mapped.promise.canCancel,
                         participantAvatars: avatars
                     )
                     return (index, mapped)
@@ -609,13 +667,17 @@ struct HomeView: View {
         let now = Date()
         let oneHourBeforeNow = now.addingTimeInterval(60 * 60)
 
+        let hasConfirmedPlace = promise.confirmedPlaceName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+
         let segment: HomeSegment
         if rawStatus == "IN_PROGRESS" {
             segment = .ongoing
-        } else if let promiseDate, promiseDate <= oneHourBeforeNow {
+        } else if hasConfirmedPlace, let promiseDate, promiseDate <= oneHourBeforeNow {
             segment = .ongoing
         } else if let promiseDate, promiseDate > oneHourBeforeNow {
             segment = .scheduled
+        } else if !hasConfirmedPlace, let promiseDate {
+            segment = promiseDate <= oneHourBeforeNow ? .scheduled : .scheduled
         } else {
             return nil
         }
@@ -624,6 +686,14 @@ struct HomeView: View {
         let timeText = formatTime(promise.promiseDateTime)
         let peopleCount = max(Int(promise.participantCount ?? 0), 1)
         let place = promise.confirmedPlaceName ?? "장소 미정"
+        let statusText: String
+        if segment == .ongoing {
+            statusText = "진행중"
+        } else if !hasConfirmedPlace {
+            statusText = "생성중"
+        } else {
+            statusText = "확정됨"
+        }
 
         return (
             segment,
@@ -634,9 +704,10 @@ struct HomeView: View {
                 time: timeText,
                 people: peopleCount,
                 place: place,
-                statusText: segment == .ongoing ? "진행중" : "예정",
+                statusText: statusText,
                 confirmedPlace: promise.confirmedPlaceName,
                 canComplete: segment == .ongoing && promise.hostId == userSession.kakaoUserId,
+                canCancel: segment == .scheduled && promise.hostId == userSession.kakaoUserId,
                 participantAvatars: Array(repeating: HomeParticipantAvatar(userId: nil, profileImageURL: nil, profileImageData: nil), count: peopleCount)
             )
         )
@@ -711,6 +782,67 @@ struct HomeView: View {
         outputFormatter.timeZone = TimeZone(identifier: "Asia/Seoul")
         outputFormatter.dateFormat = "HH:mm"
         return outputFormatter.string(from: date)
+    }
+
+    @MainActor
+    private func cancelPromise(_ item: HomePromise) async {
+        guard let promiseId = item.promiseId else {
+            completionAlertMessage = "약속 정보를 찾지 못했어요."
+            promisePendingCancellation = nil
+            return
+        }
+
+        guard let accessToken = userSession.backendAccessToken, !accessToken.isEmpty else {
+            completionAlertMessage = "로그인 정보가 없어요. 다시 로그인해주세요."
+            promisePendingCancellation = nil
+            return
+        }
+
+        isCompletingPromiseId = promiseId
+        promisePendingCancellation = nil
+        defer { isCompletingPromiseId = nil }
+
+        let result: Result<Void, Error> = await withCheckedContinuation { continuation in
+            PromiseAPIClient.shared.cancelPromise(
+                promiseId: promiseId,
+                accessToken: accessToken,
+                tokenType: userSession.backendTokenType ?? "Bearer"
+            ) { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch result {
+        case .success:
+            completionAlertMessage = "약속을 취소했어요."
+            await loadPromises()
+        case let .failure(error):
+            completionAlertMessage = friendlyCancelPromiseErrorMessage(error)
+        }
+    }
+
+    private func friendlyCancelPromiseErrorMessage(_ error: Error) -> String {
+        guard let apiError = error as? AuthAPIError else {
+            return "약속을 취소하지 못했어요. 잠시 후 다시 시도해주세요."
+        }
+
+        switch apiError {
+        case let .server(statusCode, _):
+            switch statusCode {
+            case 401, 403:
+                return "약속을 취소할 권한이 없거나 로그인 정보가 만료되었어요."
+            case 404:
+                return "약속 정보를 찾지 못했어요."
+            case 409:
+                return "지금 상태에서는 약속을 취소할 수 없어요."
+            case 500...599:
+                return "약속 취소 중 서버에 문제가 생겼어요. 잠시 후 다시 시도해주세요."
+            default:
+                return "약속을 취소하지 못했어요. 잠시 후 다시 시도해주세요."
+            }
+        default:
+            return "약속을 취소하지 못했어요. 잠시 후 다시 시도해주세요."
+        }
     }
 
     @MainActor
@@ -984,13 +1116,7 @@ private struct InviteCodeJoinSheet: View {
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 48)
-                        .background(
-                            LinearGradient(
-                                colors: [Color(hex: "#38BDF8"), Color(hex: "#2563EB")],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
+                        .background(Color(hex: "#3B82F6"))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)

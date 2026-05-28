@@ -36,6 +36,7 @@ struct HistoryItem: Identifiable {
     let location: String
     let status: HistoryStatus
     let hostId: Int64?
+    let participantAvatars: [HomeParticipantAvatar]
 }
 
 struct HistoryCard: View {
@@ -87,7 +88,7 @@ struct HistoryCard: View {
 
             HStack(alignment: .center) {
                 HStack(spacing: 12) {
-                    PeopleGroupIcon(totalCount: item.memberCount)
+                    avatarGroup
                     Text("\(item.memberCount)명 참여")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(Color(hex: "#4B5563"))
@@ -115,6 +116,82 @@ struct HistoryCard: View {
                 .stroke(Color(hex: "#E5E7EB"), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var avatarGroup: some View {
+        HStack(spacing: -8) {
+            ForEach(Array(item.participantAvatars.prefix(4).enumerated()), id: \.offset) { index, avatar in
+                HistoryCardAvatarView(
+                    avatar: avatar,
+                    tint: avatarColor(at: index)
+                )
+            }
+
+            if item.memberCount > 4 {
+                Circle()
+                    .fill(Color(hex: "#D1D5DB"))
+                    .frame(width: 28, height: 28)
+                    .overlay(
+                        Text("+\(item.memberCount - 4)")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Color(hex: "#4B5563"))
+                    )
+            }
+        }
+        .frame(height: 28)
+    }
+
+    private func avatarColor(at index: Int) -> Color {
+        let palette: [Color] = [
+            Color(hex: "#EF4444"),
+            Color(hex: "#3B82F6"),
+            Color(hex: "#22C55E"),
+            Color(hex: "#A855F7")
+        ]
+        let seed = abs(item.id.uuidString.hashValue)
+        return palette[(seed + index) % palette.count]
+    }
+}
+
+private struct HistoryCardAvatarView: View {
+    let avatar: HomeParticipantAvatar
+    let tint: Color
+
+    var body: some View {
+        Group {
+            if let data = avatar.profileImageData, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if let profileImageURL = avatar.profileImageURL,
+                      let url = URL(string: profileImageURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: 28, height: 28)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+    }
+
+    private var placeholder: some View {
+        Circle()
+            .fill(tint)
+            .overlay(
+                Image(systemName: "person.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+            )
     }
 }
 
@@ -160,45 +237,5 @@ private struct StatusChip: View {
             .frame(minWidth: 50, minHeight: 28)
             .background(status.background)
             .clipShape(Capsule())
-    }
-}
-
-private struct PeopleGroupIcon: View {
-    let totalCount: Int
-
-    private let visibleLimit = 4
-    private var visibleCount: Int { min(totalCount, visibleLimit) }
-    private var extraCount: Int { max(0, totalCount - visibleLimit) }
-    private var circleCount: Int { visibleCount + (extraCount > 0 ? 1 : 0) }
-    private var iconWidth: CGFloat {
-        guard circleCount > 0 else { return 0 }
-        return 28 + CGFloat(circleCount - 1) * 20
-    }
-
-    var body: some View {
-        HStack(spacing: -8) {
-            ForEach(0..<visibleCount, id: \.self) { _ in
-                Circle()
-                    .fill(Color(hex: "#9CA3AF"))
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.white)
-                    )
-            }
-
-            if extraCount > 0 {
-                Circle()
-                    .fill(Color(hex: "#D1D5DB"))
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Text("+\(extraCount)")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Color(hex: "#4B5563"))
-                    )
-            }
-        }
-        .frame(width: iconWidth, height: 28, alignment: .leading)
     }
 }
