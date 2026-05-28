@@ -22,6 +22,8 @@ struct MapView: View {
     @State private var selectedRouteID: UUID?
     @State private var selectedRouteTitle: String?
     @State private var selectedRouteCoordinates: [CLLocationCoordinate2D] = []
+    @State private var selectedMapFocus: DirectionsMapFocusMode = .route
+    @State private var currentLocationFocusToken = 0
     @State private var destinationTitleText: String = "약속 장소"
     @State private var participantAnnotations: [DirectionsAnnotation] = []
     @State private var destinationAnnotation: DirectionsAnnotation?
@@ -70,14 +72,27 @@ struct MapView: View {
                     let collapsedY = max(height - collapsedPeek - bottomInset, 0)
                     let expandedY = max(height - expandedHeight - bottomInset, 0)
                     let baseY = isSheetExpanded ? expandedY : collapsedY
+                    let sheetOffset = baseY + dragOffset
+                    let sheetVisibleHeight = max(height - sheetOffset, 0)
 
                     ZStack(alignment: .top) {
                         mapSection
                             .frame(width: proxy.size.width, height: proxy.size.height)
 
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                currentLocationButton
+                                    .padding(.trailing, 20)
+                                    .padding(.bottom, sheetVisibleHeight + 18)
+                            }
+                        }
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+
                         bottomSheet
                             .frame(width: proxy.size.width, height: expandedHeight, alignment: .top)
-                            .offset(y: baseY + dragOffset)
+                            .offset(y: sheetOffset)
                             .gesture(
                                 DragGesture()
                                     .updating($dragOffset) { value, state, _ in
@@ -100,6 +115,7 @@ struct MapView: View {
         }
         .task(id: promiseId) {
             shouldDrawKakaoMap = true
+            await ensureCurrentUserProfileImageCache()
             await loadScreenData()
             connectRealtimeIfPossible()
             liveLocationManager.startTracking()
@@ -202,7 +218,10 @@ struct MapView: View {
                 center: mapCenter,
                 participants: participantAnnotations,
                 destination: destinationAnnotation,
-                selectedRouteCoordinates: selectedRouteCoordinates
+                selectedRouteCoordinates: selectedRouteCoordinates,
+                focusMode: selectedMapFocus,
+                currentLocation: liveLocationManager.coordinate,
+                focusRequestToken: currentLocationFocusToken
             )
 #else
             Rectangle()
@@ -219,6 +238,23 @@ struct MapView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         }
+    }
+
+    private var currentLocationButton: some View {
+        Button {
+            focusMapOnCurrentLocation()
+        } label: {
+            Image(systemName: "scope")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(AppColors.primary)
+                .frame(width: 64, height: 64)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .shadow(color: Color.black.opacity(0.12), radius: 18, x: 0, y: 8)
+                .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("실시간 위치")
     }
 
     private var bottomSheet: some View {
@@ -488,7 +524,7 @@ private extension MapView {
 
             let profileImageURLs = mergedParticipants.compactMap { participant in
                 participant.profileImageUrl ?? currentUserProfileImageURL(for: participant.userId, nickname: participant.nickname)
-            }
+            } + [userSession.profileImageURL].compactMap { $0 }
             let remoteProfileImageDataByURL = await loadRemoteProfileImageDataMap(urls: profileImageURLs)
             let currentUserRemoteProfileData: Data? = {
                 if let cached = userSession.profileImageData ?? currentUserProfileImageCache {
@@ -536,7 +572,35 @@ private extension MapView {
                 )
             }
 
-            if let current = participantsForDirections.first(where: { $0.userId == userSession.kakaoUserId }) ?? participantsForDirections.first(where: { $0.nickname == userSession.nickname }) ?? participantsForDirections.first {
+            if let liveCoordinate = liveLocationManager.coordinate {
+                upsertCurrentUserAnnotation(coordinate: liveCoordinate)
+                let normalizedCurrentName = normalizedParticipantName(userSession.nickname)
+                if let index = participantsForDirections.firstIndex(where: { item in
+                    if let userId = item.userId, userId == userSession.kakaoUserId { return true }
+                    return normalizedParticipantName(item.nickname) == normalizedCurrentName
+                }) {
+                    let existing = participantsForDirections[index]
+                    participantsForDirections[index] = DirectionParticipant(
+                        userId: existing.userId ?? userSession.kakaoUserId,
+                        nickname: userSession.nickname.isEmpty ? existing.nickname : userSession.nickname,
+                        coordinate: liveCoordinate,
+                        profileImageURL: userSession.profileImageURL ?? existing.profileImageURL,
+                        profileImageData: userSession.profileImageData ?? currentUserProfileImageCache ?? existing.profileImageData
+                    )
+                } else {
+                    participantsForDirections.append(
+                        DirectionParticipant(
+                            userId: userSession.kakaoUserId,
+                            nickname: userSession.nickname.isEmpty ? "나" : userSession.nickname,
+                            coordinate: liveCoordinate,
+                            profileImageURL: userSession.profileImageURL,
+                            profileImageData: userSession.profileImageData ?? currentUserProfileImageCache
+                        )
+                    )
+                }
+            }
+
+            if let current = participantsForDirections.first(where: { $0.userId == userSession.kakaoUserId }) ?? participantsForDirections.first(where: { normalizedParticipantName($0.nickname) == normalizedParticipantName(userSession.nickname) }) ?? participantsForDirections.first {
                 mapCenter = current.coordinate
             }
 
@@ -641,6 +705,15 @@ private extension MapView {
         selectedRouteID = option.id
         selectedRouteTitle = option.title
         selectedRouteCoordinates = option.polylineCoordinates
+        selectedMapFocus = .route
+    }
+
+    @MainActor
+    func focusMapOnCurrentLocation() {
+        guard let coordinate = liveLocationManager.coordinate else { return }
+        mapCenter = coordinate
+        selectedMapFocus = .currentLocation
+        currentLocationFocusToken += 1
     }
 
     func connectRealtimeIfPossible() {
@@ -681,8 +754,52 @@ private extension MapView {
         let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         applyParticipantLocation(userId: event.userId, nickname: event.nickname, coordinate: coordinate)
 
-        if event.userId == userSession.kakaoUserId || (!userSession.nickname.isEmpty && event.nickname == userSession.nickname) {
+        if event.userId == userSession.kakaoUserId || (!userSession.nickname.isEmpty && normalizedParticipantName(event.nickname) == normalizedParticipantName(userSession.nickname)) {
             await refreshCurrentUserDirections(using: coordinate, fallbackNickname: event.nickname)
+        }
+    }
+
+    @MainActor
+    func ensureCurrentUserProfileImageCache() async {
+        if userSession.profileImageData != nil || currentUserProfileImageCache != nil { return }
+        guard let urlString = userSession.profileImageURL, !urlString.isEmpty, let url = URL(string: urlString) else { return }
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200...299).contains(statusCode), !data.isEmpty else { return }
+            currentUserProfileImageCache = data
+            userSession.setProfilePreviewImageData(data)
+        } catch {
+        }
+    }
+
+    @MainActor
+    func upsertCurrentUserAnnotation(coordinate: CLLocationCoordinate2D) {
+        let normalizedCurrentName = normalizedParticipantName(userSession.nickname)
+        if let index = participantAnnotations.firstIndex(where: { item in
+            if let userId = item.userId, userId == userSession.kakaoUserId { return true }
+            return normalizedParticipantName(item.title) == normalizedCurrentName
+        }) {
+            let existing = participantAnnotations[index]
+            participantAnnotations[index] = DirectionsAnnotation(
+                title: userSession.nickname.isEmpty ? existing.title : userSession.nickname,
+                coordinate: coordinate,
+                tint: existing.tint,
+                userId: existing.userId ?? userSession.kakaoUserId,
+                profileImageURL: userSession.profileImageURL ?? existing.profileImageURL,
+                profileImageData: userSession.profileImageData ?? currentUserProfileImageCache ?? existing.profileImageData
+            )
+        } else {
+            participantAnnotations.append(
+                DirectionsAnnotation(
+                    title: userSession.nickname.isEmpty ? "나" : userSession.nickname,
+                    coordinate: coordinate,
+                    tint: .systemBlue,
+                    userId: userSession.kakaoUserId,
+                    profileImageURL: userSession.profileImageURL,
+                    profileImageData: userSession.profileImageData ?? currentUserProfileImageCache
+                )
+            )
         }
     }
 
@@ -888,6 +1005,9 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
     let participants: [DirectionsAnnotation]
     let destination: DirectionsAnnotation?
     let selectedRouteCoordinates: [CLLocationCoordinate2D]
+    let focusMode: DirectionsMapFocusMode
+    let currentLocation: CLLocationCoordinate2D?
+    let focusRequestToken: Int
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -906,6 +1026,9 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
         context.coordinator.latestParticipants = participants
         context.coordinator.latestDestination = destination
         context.coordinator.latestRouteCoordinates = selectedRouteCoordinates
+        context.coordinator.latestFocusMode = focusMode
+        context.coordinator.latestCurrentLocation = currentLocation
+        context.coordinator.latestFocusToken = focusRequestToken
 
         let size = uiView.bounds.size
         if size.width > 10, size.height > 10 {
@@ -933,6 +1056,10 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
         var latestParticipants: [DirectionsAnnotation] = []
         var latestDestination: DirectionsAnnotation?
         var latestRouteCoordinates: [CLLocationCoordinate2D] = []
+        var latestFocusMode: DirectionsMapFocusMode = .route
+        var latestCurrentLocation: CLLocationCoordinate2D?
+        var latestFocusToken: Int = 0
+        var lastAppliedFocusToken: Int = -1
         var containerSize: CGSize = .zero
 
         private var hasPreparedEngine = false
@@ -1041,8 +1168,8 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
             syncRouteIfPossible(mapView)
 
             let labelManager = mapView.getLabelManager()
-            guard let participantLayer = ensureLabelLayer(labelManager, layerID: participantLayerID, zOrder: 30),
-                  let destinationLayer = ensureLabelLayer(labelManager, layerID: destinationLayerID, zOrder: 10) else { return }
+            guard let participantLayer = ensureLabelLayer(labelManager, layerID: participantLayerID, zOrder: 100),
+                  let destinationLayer = ensureLabelLayer(labelManager, layerID: destinationLayerID, zOrder: 90) else { return }
 
             participantLayer.visible = true
             destinationLayer.visible = true
@@ -1065,10 +1192,11 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
             }
 
             if let destination = latestDestination {
+                let adjustedDestinationCoordinate = adjustedDestinationCoordinateIfNeeded(destination.coordinate)
                 let options = PoiOptions(styleID: destinationStyleID, poiID: destination.id.uuidString)
                 options.rank = 0
                 options.clickable = false
-                let poi = destinationLayer.addPoi(option: options, at: MapPoint(longitude: destination.coordinate.longitude, latitude: destination.coordinate.latitude))
+                let poi = destinationLayer.addPoi(option: options, at: MapPoint(longitude: adjustedDestinationCoordinate.longitude, latitude: adjustedDestinationCoordinate.latitude))
                 poi?.show()
             }
 
@@ -1078,6 +1206,19 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
         }
 
         private func moveCameraIfPossible(_ mapView: KakaoMap) {
+            if latestFocusMode == .currentLocation,
+               latestFocusToken != lastAppliedFocusToken,
+               let currentLocation = latestCurrentLocation {
+                lastAppliedFocusToken = latestFocusToken
+                let cameraUpdate = CameraUpdate.make(
+                    target: MapPoint(longitude: currentLocation.longitude, latitude: currentLocation.latitude),
+                    zoomLevel: 15,
+                    mapView: mapView
+                )
+                mapView.moveCamera(cameraUpdate)
+                return
+            }
+
             if latestRouteCoordinates.count >= 2 {
                 let latitudes = latestRouteCoordinates.map(\.latitude)
                 let longitudes = latestRouteCoordinates.map(\.longitude)
@@ -1132,10 +1273,32 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
             return labelManager.addLabelLayer(option: options)
         }
 
+        private func adjustedDestinationCoordinateIfNeeded(_ coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+            guard latestParticipants.contains(where: { participant in
+                let latitudeDelta = abs(participant.coordinate.latitude - coordinate.latitude)
+                let longitudeDelta = abs(participant.coordinate.longitude - coordinate.longitude)
+                return latitudeDelta < 0.00035 && longitudeDelta < 0.00035
+            }) else {
+                return coordinate
+            }
+
+            return CLLocationCoordinate2D(
+                latitude: coordinate.latitude - 0.00042,
+                longitude: coordinate.longitude + 0.00022
+            )
+        }
+
         private func participantStyleID(for item: DirectionsAnnotation) -> String {
             let identity = item.userId.map { "id_\($0)" } ?? item.title.replacingOccurrences(of: " ", with: "_")
-            let hasProfile = item.profileImageData != nil || item.profileImageURL != nil
-            return "directions_participant_\(identity)_\(hasProfile ? "profile" : "placeholder")"
+            let imageToken: String
+            if let data = item.profileImageData {
+                imageToken = "data_\(data.count)"
+            } else if let url = item.profileImageURL, !url.isEmpty {
+                imageToken = "url_\(abs(url.hashValue))"
+            } else {
+                imageToken = "placeholder"
+            }
+            return "directions_participant_\(identity)_\(imageToken)"
         }
 
         private func registerParticipantStyleIfNeeded(_ labelManager: LabelManager, item: DirectionsAnnotation, styleID: String) {
@@ -1201,7 +1364,7 @@ private struct KakaoDirectionsMapView: UIViewRepresentable {
 
         private func ensureRouteLayer(_ shapeManager: ShapeManager) -> ShapeLayer? {
             if let layer = shapeManager.getShapeLayer(layerID: routeLayerID) { return layer }
-            return shapeManager.addShapeLayer(layerID: routeLayerID, zOrder: 1, passType: .overlay)
+            return shapeManager.addShapeLayer(layerID: routeLayerID, zOrder: -100, passType: .overlay)
         }
 
         private func makeParticipantMarkerImage(item: DirectionsAnnotation) -> UIImage? {
@@ -1536,4 +1699,9 @@ private final class MapLiveLocationManager: NSObject, ObservableObject, CLLocati
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("[MapRealtime] location error:", error.localizedDescription)
     }
+}
+
+private enum DirectionsMapFocusMode {
+    case route
+    case currentLocation
 }
